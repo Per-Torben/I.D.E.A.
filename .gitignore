@@ -1,0 +1,13 @@
+# GitHub configuration folder
+.github/
+
+# Logs directory
+Logs/
+
+# Export directories
+exports/
+CA-Export/
+
+# PowerShell debugging
+*.pdb
+*.ps1xml
