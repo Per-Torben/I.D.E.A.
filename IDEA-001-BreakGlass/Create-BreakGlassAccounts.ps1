@@ -11,6 +11,7 @@
     - Interactive menu-driven configuration for flexible account management
     - Detects existing break-glass accounts or creates new ones (with manual selection option)
     - Selective configuration: FIDO2 keys, CA exclusions, GA role, RMAU protection
+    - Configurable settings for account count, FIDO2 keys per account, and account prefix
     - Password complexity validation with configurable requirements (16+ chars)
     - Registers multiple FIDO2 security keys per account for passwordless authentication
     - Automatically excludes accounts from Conditional Access policies (All users/All/Specific)
@@ -18,7 +19,6 @@
     - Adds accounts to Restricted Management Administrative Units (RMAU) for protection
     - Detects RMAU membership and warns when it may block FIDO2 detection
     - Comprehensive logging with automatic cleanup and retention policies
-    - WhatIf support for safe testing
     - Implements verification and error handling with retry logic
     - Interactive prompts for physical FIDO2 key management
     - Returns to menu after each configuration for iterative setup
@@ -30,33 +30,11 @@
     - Follows Microsoft's recommended break-glass account practices
     - Prevents potential lockout scenarios in tenant security configurations
 
-.PARAMETER AccountCount
-    Number of break-glass accounts to create (default: 2)
-
-.PARAMETER KeysPerAccount
-    Number of FIDO2 keys to register per account (default: 2)
-
-.PARAMETER AccountPrefix
-    Prefix for the account names (default: breakglass-ga)
-
-.PARAMETER WhatIf
-    Show what would be done without making changes
-
-.PARAMETER SkipFIDO2
-    Skip FIDO2 key registration
-
-.PARAMETER ConfigFile
-    Path to configuration file
-
 .EXAMPLE
     .\Create-BreakGlassAccounts.ps1
     
-    Runs the complete break-glass account setup process interactively
-
-.EXAMPLE
-    .\Create-BreakGlassAccounts.ps1 -AccountCount 3 -KeysPerAccount 1
-    
-    Creates 3 accounts with 1 FIDO2 key each
+    Runs the interactive break-glass account setup with menu-driven configuration.
+    Configure account count, FIDO2 keys, and other settings through the menus.
 
 .NOTES
     Prerequisites:
@@ -78,20 +56,13 @@
 #Requires -Modules Microsoft.Graph.Authentication, Microsoft.Graph.Users, Microsoft.Graph.Identity.DirectoryManagement, Microsoft.Graph.Identity.SignIns
 
 [CmdletBinding()]
-param(
-    [int]$AccountCount = 2,
-    [int]$KeysPerAccount = 2,
-    [string]$AccountPrefix = "breakglass-ga",
-    [switch]$WhatIf,
-    [switch]$SkipFIDO2,
-    [string]$ConfigFile
-)
+param()
 
-# Configuration settings
+# Configuration settings (can be modified via settings menu)
 $Config = @{
-    AccountCount = $AccountCount
-    KeysPerAccount = $KeysPerAccount
-    AccountPrefix = $AccountPrefix
+    AccountCount = 2
+    KeysPerAccount = 2
+    AccountPrefix = "breakglass-ga"
     RoleName = "Global Administrator"
     RMAUConfig = @{
         DisplayName = "Break-Glass Accounts Protection"
@@ -333,20 +304,9 @@ function New-BreakGlassUsers {
                     PasswordProfile = @{ password = $plainPassword }
                 }
                 
-                if ($WhatIf) {
-                    Write-Log "WHATIF: Would create user $($userParams.UserPrincipalName)" -Level Info
-                    # Create mock user object for WhatIf
-                    $createdUsers += [PSCustomObject]@{
-                        Id = "mock-id-$_"
-                        UserPrincipalName = $userParams.UserPrincipalName
-                        DisplayName = $userParams.DisplayName
-                    }
-                }
-                else {
-                    $user = New-MgBetaUser @userParams
-                    $createdUsers += $user
-                    Write-Log "Created user: $($user.UserPrincipalName)" -Level Success
-                }
+                $user = New-MgBetaUser @userParams
+                $createdUsers += $user
+                Write-Log "Created user: $($user.UserPrincipalName)" -Level Success
             }
             catch {
                 Write-Log "Failed to create user $_`: $_" -Level Error
@@ -375,11 +335,6 @@ function Add-ToRestrictedAdministrativeUnit {
         }
         else {
             # Create new RMAU
-            if ($WhatIf) {
-                Write-Log "WHATIF: Would create Restricted Administrative Unit '$($Config.RMAUConfig.DisplayName)'" -Level Info
-                return
-            }
-            
             Write-Log "Creating new Restricted Management Administrative Unit..." -Level Info
             $rmauParams = @{
                 DisplayName = $Config.RMAUConfig.DisplayName
@@ -397,11 +352,6 @@ function Add-ToRestrictedAdministrativeUnit {
         
         foreach ($user in $breakGlassUsers) {
             try {
-                if ($WhatIf) {
-                    Write-Log "WHATIF: Would add $($user.UserPrincipalName) to RMAU" -Level Info
-                    continue
-                }
-                
                 # Check if already a member
                 $existingMembers = Get-MgBetaDirectoryAdministrativeUnitMember -AdministrativeUnitId $rmau.Id -ErrorAction SilentlyContinue
                 if ($existingMembers.Id -contains $user.Id) {
@@ -448,13 +398,8 @@ function Add-GlobalAdminRole {
         
         foreach ($user in $breakGlassUsers) {
             try {
-                if ($WhatIf) {
-                    Write-Log "WHATIF: Would assign Global Administrator role to $($user.UserPrincipalName)" -Level Info
-                }
-                else {
-                    New-MgBetaRoleManagementDirectoryRoleAssignment -PrincipalId $user.Id -RoleDefinitionId $gaRole -DirectoryScopeId "/"
-                    Write-Log "Assigned Global Administrator role to $($user.UserPrincipalName)" -Level Success
-                }
+                New-MgBetaRoleManagementDirectoryRoleAssignment -PrincipalId $user.Id -RoleDefinitionId $gaRole -DirectoryScopeId "/"
+                Write-Log "Assigned Global Administrator role to $($user.UserPrincipalName)" -Level Success
             }
             catch {
                 Write-Log "Failed to assign role to $($user.UserPrincipalName): $_" -Level Error
@@ -730,25 +675,18 @@ function Remove-FromConditionalAccessPolicies {
                 $exclude = @($policy.Conditions.Users.ExcludeUsers) + ($bg.Id)
                 $uniqueExcludes = $exclude | Select-Object -Unique | Where-Object { $_ -ne $null }
                 
-                if ($WhatIf) {
-                    Write-Host "  WHATIF: $($policy.DisplayName) [$statusMsg]" -ForegroundColor Cyan
-                    Write-Log "WHATIF: Would exclude break-glass accounts from policy '$($policy.DisplayName)' [$statusMsg]" -Level Info
-                    $successCount++
+                # Get full policy object for proper update
+                $fullPolicy = Get-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id
+                $fullPolicy.Conditions.Users.ExcludeUsers = $uniqueExcludes
+                
+                Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id -BodyParameter @{
+                    conditions = $fullPolicy.Conditions
                 }
-                else {
-                    # Get full policy object for proper update
-                    $fullPolicy = Get-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id
-                    $fullPolicy.Conditions.Users.ExcludeUsers = $uniqueExcludes
-                    
-                    Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id -BodyParameter @{
-                        conditions = $fullPolicy.Conditions
-                    }
-                    
-                    $addedCount = $item.MissingAccounts.Count
-                    Write-Host "  ✓ $($policy.DisplayName) [Added $addedCount account(s)]" -ForegroundColor Green
-                    Write-Log "Updated policy: $($policy.DisplayName) - Added $addedCount break-glass account(s)" -Level Success
-                    $successCount++
-                }
+                
+                $addedCount = $item.MissingAccounts.Count
+                Write-Host "  ✓ $($policy.DisplayName) [Added $addedCount account(s)]" -ForegroundColor Green
+                Write-Log "Updated policy: $($policy.DisplayName) - Added $addedCount break-glass account(s)" -Level Success
+                $successCount++
             }
             catch {
                 Write-Host "  ✗ $($policy.DisplayName): $_" -ForegroundColor Red
@@ -854,24 +792,19 @@ function Register-FIDO2KeysForUsers {
             }
             
             try {
-                if ($WhatIf) {
-                    Write-Log "WHATIF: Would register FIDO2 key '$displayName' for $upn" -Level Info
-                }
-                else {
-                    # Register the FIDO2 key
-                    $fido2Key = Register-Passkey -UPN $upn -DisplayName $displayName
-                    Start-Sleep 2
-                    
-                    # Register the FIDO2 key in Entra ID
-                    Register-FIDO2KeyInEntraID -UPN $upn -DisplayName $displayName -FIDO2 $fido2Key
+                # Register the FIDO2 key
+                $fido2Key = Register-Passkey -UPN $upn -DisplayName $displayName
+                Start-Sleep 2
+                
+                # Register the FIDO2 key in Entra ID
+                Register-FIDO2KeyInEntraID -UPN $upn -DisplayName $displayName -FIDO2 $fido2Key
                     Start-Sleep 2
                     
                     # Verify the registration
-                    $verificationResult = Verify-Registration -UPN $upn -DisplayName $displayName
-                    if (-not $verificationResult) {
-                        Write-Log "FIDO2 key registration verification failed for $upn" -Level Error
-                        throw "Verification failed for $displayName"
-                    }
+                $verificationResult = Verify-Registration -UPN $upn -DisplayName $displayName
+                if (-not $verificationResult) {
+                    Write-Log "FIDO2 key registration verification failed for $upn" -Level Error
+                    throw "Verification failed for $displayName"
                 }
             }
             catch {
@@ -922,6 +855,86 @@ function Verify-Registration {
 #endregion
 
 #region Menu Functions
+function Show-SettingsMenu {
+    Write-Host "`n╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "║          Break-Glass Account Settings                       ║" -ForegroundColor Cyan
+    Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Current Settings:" -ForegroundColor Yellow
+    Write-Host "  Account Count:        $($Config.AccountCount)" -ForegroundColor White
+    Write-Host "  Keys Per Account:     $($Config.KeysPerAccount)" -ForegroundColor White
+    Write-Host "  Account Prefix:       $($Config.AccountPrefix)" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  [1] Change Account Count (currently: $($Config.AccountCount))" -ForegroundColor Green
+    Write-Host "  [2] Change Keys Per Account (currently: $($Config.KeysPerAccount))" -ForegroundColor Green
+    Write-Host "  [3] Change Account Prefix (currently: $($Config.AccountPrefix))" -ForegroundColor Green
+    Write-Host "  [D] Done - Continue with current settings" -ForegroundColor Cyan
+    Write-Host ""
+    
+    do {
+        $choice = Read-Host "Enter your choice (1-3, or D to continue)"
+        $choice = $choice.ToUpper().Trim()
+        
+        switch ($choice) {
+            '1' {
+                do {
+                    $newCount = Read-Host "Enter number of accounts to create (1-10)"
+                    if ($newCount -match '^\d+$' -and [int]$newCount -ge 1 -and [int]$newCount -le 10) {
+                        $Config.AccountCount = [int]$newCount
+                        Write-Host "✓ Account count updated to $($Config.AccountCount)" -ForegroundColor Green
+                        Write-Log "Settings updated: AccountCount = $($Config.AccountCount)" -Level Info
+                        break
+                    }
+                    else {
+                        Write-Host "Invalid input. Please enter a number between 1 and 10." -ForegroundColor Red
+                    }
+                } while ($true)
+                Show-SettingsMenu
+                return
+            }
+            '2' {
+                do {
+                    $newKeys = Read-Host "Enter number of FIDO2 keys per account (1-5)"
+                    if ($newKeys -match '^\d+$' -and [int]$newKeys -ge 1 -and [int]$newKeys -le 5) {
+                        $Config.KeysPerAccount = [int]$newKeys
+                        Write-Host "✓ Keys per account updated to $($Config.KeysPerAccount)" -ForegroundColor Green
+                        Write-Log "Settings updated: KeysPerAccount = $($Config.KeysPerAccount)" -Level Info
+                        break
+                    }
+                    else {
+                        Write-Host "Invalid input. Please enter a number between 1 and 5." -ForegroundColor Red
+                    }
+                } while ($true)
+                Show-SettingsMenu
+                return
+            }
+            '3' {
+                do {
+                    $newPrefix = Read-Host "Enter account prefix (alphanumeric and hyphens only)"
+                    if ($newPrefix -match '^[a-zA-Z0-9-]+$') {
+                        $Config.AccountPrefix = $newPrefix
+                        Write-Host "✓ Account prefix updated to '$($Config.AccountPrefix)'" -ForegroundColor Green
+                        Write-Log "Settings updated: AccountPrefix = $($Config.AccountPrefix)" -Level Info
+                        break
+                    }
+                    else {
+                        Write-Host "Invalid prefix. Use only letters, numbers, and hyphens." -ForegroundColor Red
+                    }
+                } while ($true)
+                Show-SettingsMenu
+                return
+            }
+            'D' {
+                Write-Log "User finished settings configuration" -Level Info
+                return
+            }
+            default {
+                Write-Host "Invalid choice. Please enter 1-3, or D to continue`n" -ForegroundColor Red
+            }
+        }
+    } while ($true)
+}
+
 function Find-BreakGlassAccounts {
     Write-Host "`n╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
     Write-Host "║        Break-Glass Account Detection                        ║" -ForegroundColor Cyan
@@ -1322,14 +1335,9 @@ function Start-BreakGlassConfiguration {
             $currentStep++
             $percentComplete = [int](($currentStep / $totalSteps) * 100)
             
-            if (-not $WhatIf) {
-                Show-Progress -Activity "Break-Glass Configuration" -Status "Registering FIDO2 keys" -PercentComplete $percentComplete
-                Register-FIDO2KeysForUsers -Users $BreakGlassAccounts -KeysPerUser $Config.KeysPerAccount
-                Write-Log "✓ Configuration step 1 completed: Registered FIDO2 keys" -Level Success
-            }
-            else {
-                Write-Log "WHATIF: Would register FIDO2 keys" -Level Info
-            }
+            Show-Progress -Activity "Break-Glass Configuration" -Status "Registering FIDO2 keys" -PercentComplete $percentComplete
+            Register-FIDO2KeysForUsers -Users $BreakGlassAccounts -KeysPerUser $Config.KeysPerAccount
+            Write-Log "✓ Configuration step 1 completed: Registered FIDO2 keys" -Level Success
         }
         else {
             Write-Log "Configuration step 1 skipped: Register FIDO2 keys" -Level Info
@@ -1442,6 +1450,9 @@ catch {
     Write-Log "Failed to connect to Microsoft Graph: $_" -Level Error
     exit 1
 }
+
+# Display and configure settings
+Show-SettingsMenu
 
 # Step 1: Get or create break-glass accounts
 $breakGlassAccounts = Get-OrCreateBreakGlassAccounts
