@@ -9,7 +9,8 @@ Automated creation and configuration of break-glass emergency access accounts in
 Complete automated setup of break-glass accounts with interactive menu-driven configuration.
 
 **Key Features:**
-- Interactive menu for flexible account management
+- Interactive menu-driven configuration for flexible account management
+- Configurable settings menu (account count, FIDO2 keys per account, account prefix)
 - Detects existing break-glass accounts or creates new ones
 - Selective configuration: FIDO2 keys, CA exclusions, Global Admin role, RMAU protection
 - Password complexity validation (16+ characters)
@@ -18,7 +19,6 @@ Complete automated setup of break-glass accounts with interactive menu-driven co
 - Assigns Global Administrator role when needed
 - Adds accounts to Restricted Management Administrative Units (RMAU) for protection
 - Comprehensive logging with automatic cleanup and retention policies
-- WhatIf support for safe testing
 
 **Security Benefits:**
 - Provides reliable emergency access bypassing Conditional Access restrictions
@@ -36,33 +36,32 @@ Complete automated setup of break-glass accounts with interactive menu-driven co
 
 ## Usage
 
-### Basic Interactive Setup
+### Interactive Setup
 ```powershell
 .\Create-BreakGlassAccounts.ps1
 ```
 
-### Custom Configuration
-```powershell
-# Create 3 accounts with 1 FIDO2 key each
-.\Create-BreakGlassAccounts.ps1 -AccountCount 3 -KeysPerAccount 1
+The script guides you through:
+1. **Settings Configuration** - Configure account count (1-10), FIDO2 keys per account (1-5), and account prefix
+2. **Account Detection/Creation** - Find existing break-glass accounts or create new ones
+3. **Configuration Menu** - Selectively configure FIDO2 keys, CA exclusions, GA role, and RMAU protection
 
-# Test run without making changes
-.\Create-BreakGlassAccounts.ps1 -WhatIf
+### Configuration Options
 
-# Skip FIDO2 registration
-.\Create-BreakGlassAccounts.ps1 -SkipFIDO2
-```
+All settings are configured interactively via menus:
+- **Account Count**: 1-10 accounts (default: 2)
+- **Keys Per Account**: 1-5 FIDO2 keys per account (default: 2)
+- **Account Prefix**: Alphanumeric prefix for account names (default: "breakglass-ga")
 
-## Parameters
+### Configuration Steps
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `AccountCount` | int | 2 | Number of break-glass accounts to create |
-| `KeysPerAccount` | int | 2 | Number of FIDO2 keys to register per account |
-| `AccountPrefix` | string | "breakglass-ga" | Prefix for the account names |
-| `WhatIf` | switch | - | Show what would be done without making changes |
-| `SkipFIDO2` | switch | - | Skip FIDO2 key registration |
-| `ConfigFile` | string | - | Path to configuration file |
+Select from the menu:
+- `[1]` Register FIDO2 security keys
+- `[2]` Exclude from Conditional Access policies
+- `[3]` Assign Global Administrator role
+- `[4]` Add to Restricted Management Administrative Unit (RMAU)
+- `[A]` Run all configuration steps in recommended order
+- `[Q]` Quit without configuring
 
 ## Best Practices
 - Create at least 2 break-glass accounts for redundancy

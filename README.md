@@ -10,17 +10,17 @@ Each I.D.E.A. is organized in its own folder with:
 ## Available I.D.E.A.s
 
 ### [I.D.E.A. 001 - Break-Glass Emergency Access Accounts](IDEA-001-BreakGlass/)
-Automated creation and configuration of break-glass emergency access accounts in Microsoft Entra ID.
+Interactive menu-driven tool to create and configure break-glass emergency access accounts in Microsoft Entra ID. Break-glass accounts are critical backup administrator accounts that provide emergency access when normal administrative access is compromised or unavailable.
 
-**Key Features:**
-- Interactive menu-driven configuration
-- FIDO2 security key registration for passwordless authentication
-- Automatic Conditional Access policy exclusions
-- Global Administrator role assignment
-- Restricted Management Administrative Unit (RMAU) protection
-- Comprehensive logging and validation
+**Key Capabilities:**
+- Settings menu for account count, FIDO2 keys, and naming configuration
+- Detects existing break-glass accounts or creates new ones with secure passwords
+- FIDO2 security key registration for passwordless multi-factor authentication
+- Automatic exclusion from all Conditional Access policies to ensure accessibility
+- Global Administrator role assignment with validation
+- Restricted Management Administrative Unit (RMAU) protection to prevent unauthorized changes
 
-**Use Case:** Ensure reliable emergency access to your tenant when normal admin access is compromised or unavailable.
+**Use Case:** Prevents tenant lockout scenarios by ensuring at least one reliable administrative access path bypasses all Conditional Access restrictions.
 
 [📖 Full Documentation](IDEA-001-BreakGlass/README.md)
 
@@ -40,9 +40,9 @@ Automated creation and configuration of break-glass emergency access accounts in
 ## Contributing
 Each I.D.E.A. is developed with security and practical utility in mind. Scripts include:
 - Comprehensive error handling
-- WhatIf support for safe testing
-- Detailed logging
-- Interactive configuration options
+- Detailed logging and validation
+- Interactive menu-driven configuration
+- Secure defaults and best practice implementations
 
 ## Author
 Per-Torben Sørensen with contributions from Github Copilot
