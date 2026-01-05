@@ -856,9 +856,8 @@ function Verify-Registration {
 
 #region Menu Functions
 function Show-SettingsMenu {
-    Write-Host "`n╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║           Break-Glass Account Settings                      ║" -ForegroundColor Cyan
-    Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "`nBreak-Glass Account Settings" -ForegroundColor Cyan
+    Write-Host "════════════════════════════" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Current Settings:" -ForegroundColor Yellow
     Write-Host "  Account Count:        $($Config.AccountCount)" -ForegroundColor White
@@ -936,9 +935,8 @@ function Show-SettingsMenu {
 }
 
 function Find-BreakGlassAccounts {
-    Write-Host "`n╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║           Break-Glass Account Detection                     ║" -ForegroundColor Cyan
-    Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "`nBreak-Glass Account Detection" -ForegroundColor Cyan
+    Write-Host "═════════════════════════════" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Searching for break-glass accounts..." -ForegroundColor Yellow
     Write-Host "Search pattern: $($Config.AccountPrefix)*" -ForegroundColor Gray
@@ -1034,9 +1032,8 @@ function Get-OrCreateBreakGlassAccounts {
     }
     
     # No accounts found or user declined to use them
-    Write-Host "`n╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Yellow
-    Write-Host "║           Break-Glass Account Setup Required                ║" -ForegroundColor Yellow
-    Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Yellow
+    Write-Host "`nBreak-Glass Account Setup Required" -ForegroundColor Yellow
+    Write-Host "══════════════════════════════════" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Choose an option:" -ForegroundColor Cyan
     Write-Host "  [1] Create new break-glass accounts" -ForegroundColor Green
