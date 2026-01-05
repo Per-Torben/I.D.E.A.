@@ -12,7 +12,7 @@
     - Detects existing break-glass accounts or creates new ones (with manual selection option)
     - Selective configuration: FIDO2 keys, CA exclusions, GA role, RMAU protection
     - Configurable settings for account count, FIDO2 keys per account, and account prefix
-    - Password complexity validation with configurable requirements (16+ chars)
+    - Password complexity validation with configurable requirements (24+ chars)
     - Registers multiple FIDO2 security keys per account for passwordless authentication
     - Automatically excludes accounts from Conditional Access policies (All users/All/Specific)
     - Assigns Global Administrator role when needed
@@ -69,7 +69,7 @@ $Config = @{
         Description = "Restricted Management Administrative Unit protecting break-glass emergency access accounts from unauthorized modification"
     }
     PasswordComplexity = @{
-        MinLength = 16
+        MinLength = 24
         RequireUppercase = $true
         RequireLowercase = $true
         RequireNumbers = $true
