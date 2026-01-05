@@ -59,6 +59,26 @@ The script guides you through:
 - `[A]` Run all recommended steps  
 - `[Q]` Quit  
 
+## Logging
+
+The script creates detailed logs of all operations:
+
+**Log Location:** `.\Logs\BreakGlass-YYYY-MM-DD-HHmmss.log`
+
+**Log Features:**
+- Timestamped entries for all operations
+- Color-coded console output (Info, Success, Warning, Error)
+- Automatic log rotation (30-day retention)
+- Maximum log size: 10 MB per file
+- Logs include: account creation, FIDO2 registration, CA policy updates, role assignments, RMAU operations
+
+**Example Log Entry:**
+```
+[2026-01-05 12:18:45] [Success] Successfully connected to Microsoft Graph
+[2026-01-05 12:19:33] [Info] User confirmed using found break-glass accounts
+[2026-01-05 12:29:37] [Info] User exited configuration menu
+```
+
 ## Best Practices
 - Maintain at least two break‑glass accounts  
 - Store passwords securely offline  
