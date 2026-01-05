@@ -63,7 +63,7 @@ The script guides you through:
 - Maintain at least two break‑glass accounts  
 - Store passwords securely offline  
 - Register multiple FIDO2 keys per account  
-- Test emergency access procedures regularly  
+- [Test emergency access procedures regularly](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/security-emergency-access#validate-accounts-regularly)  
 - Document account details securely  
 - Exclude from **all** Conditional Access policies  
 - Enable RMAU protection  
@@ -80,7 +80,7 @@ The script guides you through:
 Per‑Torben Sørensen with contributions from GitHub Copilot
 
 ## Version
-2.0 — Last Updated: January 2, 2026
+2.0 — Last Updated: January 5, 2026
 
 ## References
 - Microsoft Emergency Access Best Practices  
