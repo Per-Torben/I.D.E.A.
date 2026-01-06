@@ -22,6 +22,7 @@
     - Implements verification and error handling with retry logic
     - Interactive prompts for physical FIDO2 key management
     - Returns to menu after each configuration for iterative setup
+    - Auto-installs required Microsoft Graph Beta modules (no manual installation needed)
 
     Security Benefits:
     - Provides reliable emergency access bypassing Conditional Access restrictions
@@ -38,25 +39,47 @@
 
 .NOTES
     Prerequisites:
-    - Microsoft Graph PowerShell SDK
+    - Microsoft Graph PowerShell SDK (Beta modules - auto-installed if missing):
+      * Microsoft.Graph.Authentication
+      * Microsoft.Graph.Beta.Users
+      * Microsoft.Graph.Beta.Identity.DirectoryManagement
+      * Microsoft.Graph.Beta.Identity.SignIns
     - DSInternals.Passkeys module (auto-installed)
     - Physical FIDO2 security keys for registration
     - Global Administrator permissions in the tenant
     - Required Graph API permissions (automatically requested)
+    
+    Note: All required modules are automatically installed to CurrentUser scope.
+    No manual installation or administrative rights needed for module installation.
 
     Author: Per-Torben Sørensen with contributions from Github Copilot
     Version: 2.0
-    Last Updated: January 2, 2026
+    Last Updated: January 6, 2026
 
 .LINK
     https://docs.microsoft.com/en-us/azure/active-directory/roles/security-emergency-access
 
 #>
 
-#Requires -Modules Microsoft.Graph.Authentication, Microsoft.Graph.Users, Microsoft.Graph.Identity.DirectoryManagement, Microsoft.Graph.Identity.SignIns
-
 [CmdletBinding()]
 param()
+
+# Required Graph modules (Beta versions for FIDO2 and advanced features)
+$requiredGraphModules = @(
+    'Microsoft.Graph.Authentication',
+    'Microsoft.Graph.Beta.Users',
+    'Microsoft.Graph.Beta.Identity.DirectoryManagement',
+    'Microsoft.Graph.Beta.Identity.SignIns'
+)
+
+# Auto-install missing Graph modules
+foreach ($module in $requiredGraphModules) {
+    if (-not (Get-Module -ListAvailable -Name $module)) {
+        Write-Host "Installing module: $module" -ForegroundColor Yellow
+        Install-Module $module -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+        Write-Host "✓ Installed $module" -ForegroundColor Green
+    }
+}
 
 # Configuration settings (can be modified via settings menu)
 $Config = @{
@@ -581,7 +604,7 @@ function Remove-FromConditionalAccessPolicies {
     
     try {
         $bg = Get-MgBetaUser -Filter "startswith(userPrincipalName,'$($Config.AccountPrefix)')"
-        $allPolicies = Get-MgIdentityConditionalAccessPolicy
+        $allPolicies = Get-MgBetaIdentityConditionalAccessPolicy
         
         Write-Log "Found $($allPolicies.Count) Conditional Access policies" -Level Info
         
@@ -676,10 +699,10 @@ function Remove-FromConditionalAccessPolicies {
                 $uniqueExcludes = $exclude | Select-Object -Unique | Where-Object { $_ -ne $null }
                 
                 # Get full policy object for proper update
-                $fullPolicy = Get-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id
+                $fullPolicy = Get-MgBetaIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id
                 $fullPolicy.Conditions.Users.ExcludeUsers = $uniqueExcludes
                 
-                Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id -BodyParameter @{
+                Update-MgBetaIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id -BodyParameter @{
                     conditions = $fullPolicy.Conditions
                 }
                 
