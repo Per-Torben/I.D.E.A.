@@ -94,18 +94,16 @@ function Initialize-Variables {
                 Write-Host "Connect to Microsoft Graph with the required scopes:" -ForegroundColor Yellow
                 Write-Host "  Connect-MgGraph -TenantId 'your-tenant-id' -Scopes 'Application.ReadWrite.All','Directory.ReadWrite.All','AppRoleAssignment.ReadWrite.All'" -ForegroundColor Cyan
                 Write-Host ""
-                throw "Tenant ID required"
+                exit 1
             }
         }
         catch {
-            if ($_.Exception.Message -ne "Tenant ID required") {
-                Write-Host "Error getting tenant context. Please provide TenantId parameter or connect to Graph first." -ForegroundColor Red
-                Write-Host ""
-                Write-Host "Connect with required permissions:" -ForegroundColor Yellow
-                Write-Host "  Connect-MgGraph -TenantId 'your-tenant-id' -Scopes 'Application.ReadWrite.All','Directory.ReadWrite.All','AppRoleAssignment.ReadWrite.All'" -ForegroundColor Cyan
-                Write-Host ""
-            }
-            throw
+            Write-Host "Error getting tenant context. Please provide TenantId parameter or connect to Graph first." -ForegroundColor Red
+            Write-Host ""
+            Write-Host "Connect with required permissions:" -ForegroundColor Yellow
+            Write-Host "  Connect-MgGraph -TenantId 'your-tenant-id' -Scopes 'Application.ReadWrite.All','Directory.ReadWrite.All','AppRoleAssignment.ReadWrite.All'" -ForegroundColor Cyan
+            Write-Host ""
+            exit 1
         }
     }
     
