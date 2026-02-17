@@ -1338,12 +1338,22 @@ try {
                         }
                         
                         # Build display name showing the membership path
+                        # [PIM] marker indicates PIM eligibility, [Nested] indicates nested group membership
+                        # Only add marker if path doesn't already end with one (to avoid duplication)
                         $displayGroupName = if ($groupMember.MembershipType -eq "PIM Eligible") {
-                            "$membershipPath [PIM]"
+                            if ($membershipPath -notmatch '\[(PIM|Nested)\]$') {
+                                "$membershipPath [PIM]"
+                            } else {
+                                $membershipPath
+                            }
                         } elseif ($groupMember.NestingLevel -gt 0) {
-                            "$membershipPath [Nested]"
+                            if ($membershipPath -notmatch '\[(PIM|Nested)\]$') {
+                                "$membershipPath [Nested]"
+                            } else {
+                                $membershipPath
+                            }
                         } else {
-                            $group.DisplayName
+                            $membershipPath
                         }
                         
                         $privilegedUsers[$memberUserId].GroupBasedRoles += @{
@@ -1511,12 +1521,24 @@ try {
                         }
                         
                         # Build display name showing the membership path
+                        # [PIM] marker indicates PIM eligibility, [Nested] indicates nested group membership
+                        # Only add marker if path doesn't already end with one (to avoid duplication)
                         $displayGroupName = if ($groupMember.MembershipType -eq "PIM Eligible") {
-                            "$membershipPath → $($group.DisplayName) [PIM]"
+                            $fullPath = "$membershipPath → $($group.DisplayName)"
+                            if ($fullPath -notmatch '\[(PIM|Nested)\]$') {
+                                "$fullPath [PIM]"
+                            } else {
+                                $fullPath
+                            }
                         } elseif ($groupMember.NestingLevel -gt 0) {
-                            "$membershipPath → $($group.DisplayName) [Nested]"
+                            $fullPath = "$membershipPath → $($group.DisplayName)"  
+                            if ($fullPath -notmatch '\[(PIM|Nested)\]$') {
+                                "$fullPath [Nested]"
+                            } else {
+                                $fullPath
+                            }
                         } else {
-                            $group.DisplayName
+                            "$membershipPath → $($group.DisplayName)"
                         }
                         
                         $privilegedUsers[$memberUserId].PIMGroupEligibleRoles += @{
@@ -2722,8 +2744,11 @@ try {
             # Calculate risk level for this user
             $hasPhoneRisk = ($mfaStatus.HasPhone -eq $true)
             $hasAURisk = ($user.AUProtection.IsProtected -eq $false)
+            $hasNoMFA = ($mfaStatus.MFACapable -eq $false)
             $riskLevel = if ($null -eq $mfaStatus.MFACapable) {
                 "Unknown"
+            } elseif ($hasNoMFA) {
+                "Critical (No MFA)"
             } elseif ($hasPhoneRisk -and $hasAURisk) {
                 "High (Phone MFA + No AU)"
             } elseif ($hasPhoneRisk) {
@@ -2928,4 +2953,3 @@ catch {
     Write-Log "Stack trace: $($_.ScriptStackTrace)" -Level "ERROR"
     throw
 }
-
