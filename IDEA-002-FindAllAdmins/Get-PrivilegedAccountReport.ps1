@@ -660,7 +660,7 @@ function Get-AllGroupMembers {
         # Also check for users who are PIM eligible for this group
         $pimEligibleForThisGroup = $AllPIMGroupEligibility | Where-Object { $_.groupId -eq $GroupId }
         foreach ($pimAssignment in $pimEligibleForThisGroup) {
-            # Verify it's a user
+            # Check if it's a user
             try {
                 $user = Get-MgUser -UserId $pimAssignment.principalId -Property Id -ErrorAction Stop
                 $allMembers += @{
@@ -672,7 +672,26 @@ function Get-AllGroupMembers {
                 }
             }
             catch {
-                # Not a user, skip
+                # Not a user, check if it's a group that is PIM eligible for this group
+                try {
+                    $pimEligibleGroup = Get-MgGroup -GroupId $pimAssignment.principalId -Property DisplayName -ErrorAction Stop
+                    
+                    # Recursively get members of the PIM eligible group
+                    $pimGroupMembers = Get-AllGroupMembers -GroupId $pimAssignment.principalId `
+                        -AllPIMGroupEligibility $AllPIMGroupEligibility `
+                        -ProcessedGroups $ProcessedGroups `
+                        -MaxDepth $MaxDepth `
+                        -CurrentDepth ($CurrentDepth + 1)
+                    
+                    foreach ($pimGroupMember in $pimGroupMembers) {
+                        $pimGroupMember.GroupPath = $pimGroupMember.GroupPath + @("$($group.DisplayName) [PIM]")
+                        $pimGroupMember.GroupIdPath = $pimGroupMember.GroupIdPath + @($GroupId)
+                        $allMembers += $pimGroupMember
+                    }
+                }
+                catch {
+                    # Not a user or group, skip
+                }
             }
         }
     }
