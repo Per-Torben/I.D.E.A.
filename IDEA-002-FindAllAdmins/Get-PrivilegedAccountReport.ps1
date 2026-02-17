@@ -1724,30 +1724,39 @@ try {
                                 }
                                 $groupPathString = ($groupPathNames -join " → ")
                                 
-                                $privilegedUsers[$userId].PIMGroupEligibleRoles += @{
-                                    RoleName = $groupRole.RoleName
-                                    RoleId = $groupRole.RoleId
-                                    AssignmentType = "PIM Group Eligible"
-                                    GroupName = $groupPathString
-                                    GroupId = $groupId
-                                    NestingLevel = $groupRole.NestingLevel
+                                # Check if this permission is already captured in GroupBasedRoles (to avoid duplicates)
+                                $alreadyExists = $privilegedUsers[$userId].GroupBasedRoles | Where-Object {
+                                    $_.RoleName -eq $groupRole.RoleName -and $_.GroupId -eq $groupId
                                 }
                                 
-                                # Track role statistics
-                                if (-not $roleStats.ContainsKey($groupRole.RoleName)) {
-                                    $roleStats[$groupRole.RoleName] = @{
+                                if (-not $alreadyExists) {
+                                    $privilegedUsers[$userId].PIMGroupEligibleRoles += @{
                                         RoleName = $groupRole.RoleName
                                         RoleId = $groupRole.RoleId
-                                        Type = "Role"
-                                        ActiveCount = 0
-                                        EligibleCount = 0
-                                        GroupBasedCount = 0
-                                        PIMGroupEligibleCount = 0
-                                        TotalUniqueUsers = 0
-                                        Users = @()
+                                        AssignmentType = "PIM Group Eligible"
+                                        GroupName = $groupPathString
+                                        GroupId = $groupId
+                                        NestingLevel = $groupRole.NestingLevel
                                     }
+                                    
+                                    # Track role statistics (only when actually adding, not duplicates)
+                                    if (-not $roleStats.ContainsKey($groupRole.RoleName)) {
+                                        $roleStats[$groupRole.RoleName] = @{
+                                            RoleName = $groupRole.RoleName
+                                            RoleId = $groupRole.RoleId
+                                            Type = "Role"
+                                            ActiveCount = 0
+                                            EligibleCount = 0
+                                            GroupBasedCount = 0
+                                            PIMGroupEligibleCount = 0
+                                            TotalUniqueUsers = 0
+                                            Users = @()
+                                        }
+                                    }
+                                    $roleStats[$groupRole.RoleName].PIMGroupEligibleCount++
+                                } else {
+                                    Write-Log "Skipping duplicate: User $($userDetails.DisplayName) already has $($groupRole.RoleName) via group $groupId in GroupBasedRoles" -Level "INFO"
                                 }
-                                $roleStats[$groupRole.RoleName].PIMGroupEligibleCount++
                             }
                         }
                         else {
