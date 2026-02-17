@@ -698,6 +698,8 @@ try {
                                     if (-not $roleStats.ContainsKey("PIM Group Active Member")) {
                                         $roleStats["PIM Group Active Member"] = @{
                                             RoleName = "PIM Group Active Member"
+                                            RoleId = $group.Id
+                                            Type = "Group"
                                             ActiveCount = 0
                                             EligibleCount = 0
                                             GroupBasedCount = 0
@@ -997,6 +999,8 @@ try {
                 if (-not $roleStats.ContainsKey($roleName)) {
                     $roleStats[$roleName] = @{
                         RoleName = $roleName
+                        RoleId = $roleId
+                        Type = "Role"
                         ActiveCount = 0
                         EligibleCount = 0
                         GroupBasedCount = 0
@@ -1103,6 +1107,8 @@ try {
                         if (-not $roleStats.ContainsKey($roleDefinition.displayName)) {
                             $roleStats[$roleDefinition.displayName] = @{
                                 RoleName = $roleDefinition.displayName
+                                RoleId = $roleId
+                                Type = "Role"
                                 ActiveCount = 0
                                 EligibleCount = 0
                                 GroupBasedCount = 0
@@ -1200,6 +1206,8 @@ try {
                 if (-not $roleStats.ContainsKey($roleName)) {
                     $roleStats[$roleName] = @{
                         RoleName = $roleName
+                        RoleId = $roleId
+                        Type = "Role"
                         ActiveCount = 0
                         EligibleCount = 0
                         GroupBasedCount = 0
@@ -1261,6 +1269,8 @@ try {
                         if (-not $roleStats.ContainsKey($roleDefinition.displayName)) {
                             $roleStats[$roleDefinition.displayName] = @{
                                 RoleName = $roleDefinition.displayName
+                                RoleId = $roleId
+                                Type = "Role"
                                 ActiveCount = 0
                                 EligibleCount = 0
                                 GroupBasedCount = 0
@@ -1426,6 +1436,8 @@ try {
                                     if (-not $roleStats.ContainsKey($roleName)) {
                                         $roleStats[$roleName] = @{
                                             RoleName = $roleName
+                                            RoleId = $groupRoleAssignment.roleDefinitionId
+                                            Type = "Role"
                                             ActiveCount = 0
                                             EligibleCount = 0
                                             GroupBasedCount = 0
@@ -1470,6 +1482,8 @@ try {
                                 if (-not $roleStats.ContainsKey("PIM Group Eligible Member")) {
                                     $roleStats["PIM Group Eligible Member"] = @{
                                         RoleName = "PIM Group Eligible Member"
+                                        RoleId = $groupId
+                                        Type = "Group"
                                         ActiveCount = 0
                                         EligibleCount = 0
                                         GroupBasedCount = 0
@@ -1551,6 +1565,8 @@ try {
                                 if (-not $roleStats.ContainsKey($role.displayName)) {
                                     $roleStats[$role.displayName] = @{
                                         RoleName = $role.displayName
+                                        RoleId = $role.roleTemplateId
+                                        Type = "Role"
                                         ActiveCount = 0
                                         EligibleCount = 0
                                         GroupBasedCount = 0
@@ -1663,6 +1679,8 @@ try {
                         if (-not $roleStats.ContainsKey("Privileged User (Detected via Search)")) {
                             $roleStats["Privileged User (Detected via Search)"] = @{
                                 RoleName = "Privileged User (Detected via Search)"
+                                RoleId = $null
+                                Type = "Detection"
                                 ActiveCount = 0
                                 EligibleCount = 0
                                 GroupBasedCount = 0
@@ -2384,6 +2402,7 @@ try {
             $roleDistributionData += [PSCustomObject]@{
                 RoleName = $role.RoleName
                 RoleId = $role.RoleId
+                Type = $role.Type
                 ActiveAssignments = $role.ActiveCount
                 PIMEligible = $role.EligibleCount
                 GroupBasedAssignments = $role.GroupBasedCount
