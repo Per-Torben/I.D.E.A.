@@ -1315,6 +1315,21 @@ try {
                 foreach ($groupMember in $allGroupUsers) {
                     $memberUserId = $groupMember.UserId
                     
+                    # Skip users who reach this group only through PIM eligibility (no active membership in the chain)
+                    # They will be processed in the dedicated PIM group eligibility section
+                    if ($groupMember.MembershipType -eq "PIM Eligible") {
+                        Write-Log "Skipping user $memberUserId in active group processing - only has PIM eligible access, will be handled in dedicated PIM section" -Level "INFO"
+                        continue
+                    }
+                    
+                    # Also skip users who have PIM eligibility anywhere in the system for any role-assignable group
+                    # This handles cases where group PIM activation causes transitive membership
+                    $hasPIMEligibility = $pimGroupEligibilityAssignments | Where-Object { $_.principalId -eq $memberUserId }
+                    if ($hasPIMEligibility) {
+                        Write-Log "Skipping user $memberUserId in active group processing - has PIM group eligibility elsewhere, prioritizing PIM section" -Level "INFO"
+                        continue
+                    }
+                    
                     # Get user details
                     try {
                         $memberUser = Get-MgUser -UserId $memberUserId -Property DisplayName,UserPrincipalName,UserType,AccountEnabled -ErrorAction Stop
@@ -1338,15 +1353,9 @@ try {
                         }
                         
                         # Build display name showing the membership path
-                        # [PIM] marker indicates PIM eligibility, [Nested] indicates nested group membership
+                        # [Nested] indicates nested group membership
                         # Only add marker if path doesn't already end with one (to avoid duplication)
-                        $displayGroupName = if ($groupMember.MembershipType -eq "PIM Eligible") {
-                            if ($membershipPath -notmatch '\[(PIM|Nested)\]$') {
-                                "$membershipPath [PIM]"
-                            } else {
-                                $membershipPath
-                            }
-                        } elseif ($groupMember.NestingLevel -gt 0) {
+                        $displayGroupName = if ($groupMember.NestingLevel -gt 0) {
                             if ($membershipPath -notmatch '\[(PIM|Nested)\]$') {
                                 "$membershipPath [Nested]"
                             } else {
@@ -1359,7 +1368,7 @@ try {
                         $privilegedUsers[$memberUserId].GroupBasedRoles += @{
                             RoleName = $roleDefinition.displayName
                             RoleId = $roleId
-                            AssignmentType = if ($groupMember.MembershipType -eq "PIM Eligible") { "Group-Based (PIM)" } else { "Group-Based (Active)" }
+                            AssignmentType = "Group-Based"
                             GroupName = $displayGroupName
                             GroupId = $principalId
                             NestingLevel = $groupMember.NestingLevel
@@ -2085,23 +2094,30 @@ try {
     
     # Calculate risk statistics - separate phone MFA and AU protection risks
     # Use @() to force array conversion for accurate .Count when single item returned
+    
+    # CRITICAL: Users with no MFA at all
+    $noMFA = @($privilegedUsers.Values | Where-Object { 
+        ($_.MFAStatus.MFACapable -eq $false)
+    })
+    $noMFACount = $noMFA.Count
+    
     $phoneRiskOnly = @($privilegedUsers.Values | Where-Object { 
-        ($_.MFAStatus.HasPhone -eq $true) -and ($_.AUProtection.IsProtected -eq $true)
+        ($_.MFAStatus.MFACapable -eq $true) -and ($_.MFAStatus.HasPhone -eq $true) -and ($_.AUProtection.IsProtected -eq $true)
     })
     $phoneRiskOnlyCount = $phoneRiskOnly.Count
     
     $noAUOnly = @($privilegedUsers.Values | Where-Object { 
-        ($_.MFAStatus.HasPhone -eq $false) -and ($_.AUProtection.IsProtected -eq $false)
+        ($_.MFAStatus.MFACapable -eq $true) -and ($_.MFAStatus.HasPhone -eq $false) -and ($_.AUProtection.IsProtected -eq $false)
     })
     $noAUOnlyCount = $noAUOnly.Count
     
     $bothRisks = @($privilegedUsers.Values | Where-Object { 
-        ($_.MFAStatus.HasPhone -eq $true) -and ($_.AUProtection.IsProtected -eq $false)
+        ($_.MFAStatus.MFACapable -eq $true) -and ($_.MFAStatus.HasPhone -eq $true) -and ($_.AUProtection.IsProtected -eq $false)
     })
     $bothRisksCount = $bothRisks.Count
     
     $fullSecure = @($privilegedUsers.Values | Where-Object { 
-        ($_.MFAStatus.HasPhone -eq $false) -and ($_.AUProtection.IsProtected -eq $true)
+        ($_.MFAStatus.MFACapable -eq $true) -and ($_.MFAStatus.HasPhone -eq $false) -and ($_.AUProtection.IsProtected -eq $true)
     })
     $fullSecureCount = $fullSecure.Count
     
@@ -2650,14 +2666,16 @@ try {
     Write-Host ""
     
     Write-Host "Risk Assessment:" -ForegroundColor Cyan
-    Write-Host "  ✅ Fully Secure (No Phone, AU Protected):  " -NoNewline -ForegroundColor Green
+    Write-Host "  ✅ Fully Secure (MFA without Phone, AU Protected):           " -NoNewline -ForegroundColor Green
     Write-Host "$fullSecureCount" -ForegroundColor White
-    Write-Host "  ⚠️  Phone MFA Risk Only (Has AU):            " -NoNewline -ForegroundColor Yellow
+    Write-Host "  ⚠️  Medium risk: Phone MFA Risk Only (Phone as MFA, Has AU): " -NoNewline -ForegroundColor Yellow
     Write-Host "$phoneRiskOnlyCount" -ForegroundColor White
-    Write-Host "  ⚠️  No AU Protection Only (No Phone MFA):    " -NoNewline -ForegroundColor Yellow
+    Write-Host "  ⚠️  Medium risk: No AU Protection Only (MFA without phone):   " -NoNewline -ForegroundColor Yellow
     Write-Host "$noAUOnlyCount" -ForegroundColor White
-    Write-Host "  🚨 Both Risks (Phone MFA + No AU):         " -NoNewline -ForegroundColor Red
+    Write-Host "  🚨 High risk: Both Risks (MFA with Phone + No AU):           " -NoNewline -ForegroundColor Red
     Write-Host "$bothRisksCount" -ForegroundColor White
+    Write-Host "  🚨 CRITICAL - No MFA:                                        " -NoNewline -ForegroundColor Red
+    Write-Host "$noMFACount" -ForegroundColor White
     if ($unknownRiskCount -gt 0) {
         Write-Host "  ❓ Unknown MFA Status:                      " -NoNewline -ForegroundColor DarkGray
         Write-Host "$unknownRiskCount" -ForegroundColor DarkGray
@@ -2760,10 +2778,10 @@ try {
                 "Critical (No MFA)"
             } elseif ($hasPhoneRisk -and $hasAURisk) {
                 "High (Phone MFA + No AU)"
-            } elseif ($hasPhoneRisk) {
-                "Medium (Phone MFA)"
-            } elseif ($hasAURisk) {
-                "Medium (No AU)"
+            } elseif ($hasPhoneRisk -and -not $hasAURisk) {
+                "Medium (Phone MFA, Has AU)"
+            } elseif (-not $hasPhoneRisk -and $hasAURisk) {
+                "Medium (MFA, No AU)"
             } else {
                 "Low (Secure)"
             }
@@ -2817,6 +2835,37 @@ try {
             # Create rows for group-based assignments
             if ($IncludeGroups) {
                 foreach ($role in $user.GroupBasedRoles) {
+                    # Skip "PIM Group Active Member" entries if the same group grants actual roles
+                    if ($role.RoleName -eq "PIM Group Active Member") {
+                        # Check if this user has any other role entries (actual roles) that involve this same group
+                        $hasActualRolesFromSameGroup = $false
+                        
+                        # Check in GroupBasedRoles for actual roles from this group or nested paths containing it
+                        foreach ($otherRole in $user.GroupBasedRoles) {
+                            if ($otherRole.RoleName -ne "PIM Group Active Member" -and 
+                                ($otherRole.GroupId -eq $role.GroupId -or $otherRole.GroupName -like "*$($role.GroupName)*")) {
+                                $hasActualRolesFromSameGroup = $true
+                                break
+                            }
+                        }
+                        
+                        # Also check in PIMGroupEligibleRoles
+                        if (-not $hasActualRolesFromSameGroup) {
+                            foreach ($otherRole in $user.PIMGroupEligibleRoles) {
+                                if ($otherRole.GroupId -eq $role.GroupId -or $otherRole.GroupName -like "*$($role.GroupName)*") {
+                                    $hasActualRolesFromSameGroup = $true
+                                    break
+                                }
+                            }
+                        }
+                        
+                        # Skip this entry if actual roles from same group exist
+                        if ($hasActualRolesFromSameGroup) {
+                            Write-Log "Skipping redundant 'PIM Group Active Member' entry for $($user.DisplayName) - group $($role.GroupName) grants actual roles" -Level "INFO"
+                            continue
+                        }
+                    }
+                    
                     $exportData += [PSCustomObject]@{
                         PrincipalType = "User"
                         UserPrincipalName = $user.UserPrincipalName
