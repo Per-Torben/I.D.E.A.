@@ -461,6 +461,228 @@ function Get-NestedGroupMembers {
     return $allUsers
 }
 
+function Get-GroupRoleChain {
+    <#
+    .SYNOPSIS
+        Resolves all roles that a group provides, including through nested group membership and PIM assignments.
+    #>
+    param(
+        [string]$GroupId,
+        [array]$AllActiveAssignments,
+        [array]$AllEligibleAssignments,
+        [array]$AllPIMGroupEligibility,
+        [hashtable]$ProcessedGroups = @{},
+        [int]$MaxDepth = 10,
+        [int]$CurrentDepth = 0
+    )
+    
+    # Prevent infinite recursion
+    if ($CurrentDepth -ge $MaxDepth) {
+        Write-Log "Maximum nesting depth ($MaxDepth) reached for group role chain $GroupId" -Level "WARNING"
+        return @()
+    }
+    
+    # Check if we've already processed this group to prevent circular references
+    if ($ProcessedGroups.ContainsKey($GroupId)) {
+        return @()
+    }
+    
+    $ProcessedGroups[$GroupId] = $true
+    $roleChain = @()
+    
+    try {
+        $group = Get-MgGroup -GroupId $GroupId -Property DisplayName,IsAssignableToRole -ErrorAction Stop
+        
+        # Check for direct active role assignments
+        $directActiveRoles = $AllActiveAssignments | Where-Object { $_.principalId -eq $GroupId }
+        foreach ($assignment in $directActiveRoles) {
+            $roleDefinition = Get-RoleDefinitionDetails -RoleDefinitionId $assignment.roleDefinitionId
+            if ($roleDefinition) {
+                $roleChain += @{
+                    RoleName = $roleDefinition.displayName
+                    RoleId = $assignment.roleDefinitionId
+                    AssignmentType = "Active (via Group)"
+                    GroupName = $group.DisplayName
+                    GroupId = $GroupId
+                    GroupPath = @($GroupId)
+                    GroupPathNames = @($group.DisplayName)
+                    NestingLevel = $CurrentDepth
+                }
+            }
+        }
+        
+        # Check for direct PIM eligible role assignments
+        $directEligibleRoles = $AllEligibleAssignments | Where-Object { $_.principalId -eq $GroupId }
+        foreach ($assignment in $directEligibleRoles) {
+            $roleDefinition = Get-RoleDefinitionDetails -RoleDefinitionId $assignment.roleDefinitionId
+            if ($roleDefinition) {
+                $roleChain += @{
+                    RoleName = $roleDefinition.displayName
+                    RoleId = $assignment.roleDefinitionId
+                    AssignmentType = "PIM Eligible (via Group)"
+                    GroupName = $group.DisplayName
+                    GroupId = $GroupId
+                    GroupPath = @($GroupId)
+                    GroupPathNames = @($group.DisplayName)
+                    NestingLevel = $CurrentDepth
+                }
+            }
+        }
+        
+        # Check if this group is a member of other groups (regular nesting)
+        try {
+            $memberOfGroups = Get-MgGroupMemberOf -GroupId $GroupId -All -ErrorAction Stop
+            foreach ($parentGroup in $memberOfGroups) {
+                $parentGroupType = $parentGroup.AdditionalProperties.'@odata.type'
+                if ($parentGroupType -eq '#microsoft.graph.group') {
+                    # Recursively check the parent group's role assignments
+                    $parentRoles = Get-GroupRoleChain -GroupId $parentGroup.Id `
+                        -AllActiveAssignments $AllActiveAssignments `
+                        -AllEligibleAssignments $AllEligibleAssignments `
+                        -AllPIMGroupEligibility $AllPIMGroupEligibility `
+                        -ProcessedGroups $ProcessedGroups `
+                        -MaxDepth $MaxDepth `
+                        -CurrentDepth ($CurrentDepth + 1)
+                    
+                    # Add current group to the path for all parent roles
+                    foreach ($role in $parentRoles) {
+                        $role.GroupPath = @($GroupId) + $role.GroupPath
+                        $role.GroupPathNames = @($group.DisplayName) + $role.GroupPathNames
+                        $role.NestingLevel = $CurrentDepth
+                        $roleChain += $role
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Log "Error checking group membership for $GroupId : $($_.Exception.Message)" -Level "WARNING"
+        }
+        
+        # NEW: Check if this group is PIM ELIGIBLE for membership in other groups
+        $pimEligibleForGroups = $AllPIMGroupEligibility | Where-Object { $_.principalId -eq $GroupId }
+        foreach ($pimEligibility in $pimEligibleForGroups) {
+            $targetGroupId = $pimEligibility.groupId
+            Write-Log "Group $($group.DisplayName) is PIM eligible for group $targetGroupId" -Level "INFO"
+            
+            try {
+                # Recursively check what roles the target group provides
+                $targetGroupRoles = Get-GroupRoleChain -GroupId $targetGroupId `
+                    -AllActiveAssignments $AllActiveAssignments `
+                    -AllEligibleAssignments $AllEligibleAssignments `
+                    -AllPIMGroupEligibility $AllPIMGroupEligibility `
+                    -ProcessedGroups $ProcessedGroups `
+                    -MaxDepth $MaxDepth `
+                    -CurrentDepth ($CurrentDepth + 1)
+                
+                # Add current group to the path with PIM indicator
+                foreach ($role in $targetGroupRoles) {
+                    $role.GroupPath = @($GroupId) + $role.GroupPath
+                    $role.GroupPathNames = @("$($group.DisplayName) [PIM]") + $role.GroupPathNames
+                    $role.NestingLevel = $CurrentDepth
+                    $roleChain += $role
+                }
+            }
+            catch {
+                Write-Log "Error checking PIM eligible group $targetGroupId : $($_.Exception.Message)" -Level "WARNING"
+            }
+        }
+    }
+    catch {
+        Write-Log "Error resolving role chain for group $GroupId : $($_.Exception.Message)" -Level "WARNING"
+    }
+    
+    return $roleChain
+}
+
+function Get-AllGroupMembers {
+    <#
+    .SYNOPSIS
+        Gets all members of a group including users in nested regular groups and users PIM eligible for nested groups.
+        This handles: User → Regular Group → PIM Group → Role scenarios.
+    #>
+    param(
+        [string]$GroupId,
+        [array]$AllPIMGroupEligibility,
+        [hashtable]$ProcessedGroups = @{},
+        [int]$MaxDepth = 10,
+        [int]$CurrentDepth = 0
+    )
+    
+    # Prevent infinite recursion
+    if ($CurrentDepth -ge $MaxDepth) {
+        Write-Log "Maximum depth ($MaxDepth) reached for group members $GroupId" -Level "WARNING"
+        return @()
+    }
+    
+    # Check if we've already processed this group
+    if ($ProcessedGroups.ContainsKey($GroupId)) {
+        return @()
+    }
+    
+    $ProcessedGroups[$GroupId] = $true
+    $allMembers = @()
+    
+    try {
+        $group = Get-MgGroup -GroupId $GroupId -Property DisplayName -ErrorAction Stop
+        
+        # Get direct members of the group
+        $members = Get-MgGroupMember -GroupId $GroupId -All -ErrorAction Stop
+        
+        foreach ($member in $members) {
+            $memberType = $member.AdditionalProperties.'@odata.type'
+            
+            if ($memberType -eq '#microsoft.graph.user') {
+                # Direct user member
+                $allMembers += @{
+                    UserId = $member.Id
+                    MembershipType = "Direct Member"
+                    GroupPath = @($group.DisplayName)
+                    GroupIdPath = @($GroupId)
+                    NestingLevel = $CurrentDepth
+                }
+            }
+            elseif ($memberType -eq '#microsoft.graph.group') {
+                # Nested group - get its members recursively
+                $nestedMembers = Get-AllGroupMembers -GroupId $member.Id `
+                    -AllPIMGroupEligibility $AllPIMGroupEligibility `
+                    -ProcessedGroups $ProcessedGroups `
+                    -MaxDepth $MaxDepth `
+                    -CurrentDepth ($CurrentDepth + 1)
+                
+                foreach ($nestedMember in $nestedMembers) {
+                    $nestedMember.GroupPath = @($group.DisplayName) + $nestedMember.GroupPath
+                    $nestedMember.GroupIdPath = @($GroupId) + $nestedMember.GroupIdPath
+                    $allMembers += $nestedMember
+                }
+            }
+        }
+        
+        # Also check for users who are PIM eligible for this group
+        $pimEligibleForThisGroup = $AllPIMGroupEligibility | Where-Object { $_.groupId -eq $GroupId }
+        foreach ($pimAssignment in $pimEligibleForThisGroup) {
+            # Verify it's a user
+            try {
+                $user = Get-MgUser -UserId $pimAssignment.principalId -Property Id -ErrorAction Stop
+                $allMembers += @{
+                    UserId = $user.Id
+                    MembershipType = "PIM Eligible"
+                    GroupPath = @("$($group.DisplayName) [PIM]")
+                    GroupIdPath = @($GroupId)
+                    NestingLevel = $CurrentDepth
+                }
+            }
+            catch {
+                # Not a user, skip
+            }
+        }
+    }
+    catch {
+        Write-Log "Error getting members for group $GroupId : $($_.Exception.Message)" -Level "WARNING"
+    }
+    
+    return $allMembers
+}
+
 try {
     Write-Log "Starting Privileged Account Report generation" -Level "INFO"
     
@@ -1067,17 +1289,19 @@ try {
                 
                 Write-Log "Found active GROUP assignment: $($group.DisplayName) with role: $($roleDefinition.displayName)" -Level "INFO"
                 
-                # Process all members of this group (including nested)
-                $allGroupUsers = Get-NestedGroupMembers -GroupId $principalId
-                Write-Log "Active role group $($group.DisplayName) has $($allGroupUsers.Count) total users (including nested)" -Level "INFO"
+                # Process all members of this group (including nested and PIM eligible)
+                $allGroupUsers = Get-AllGroupMembers -GroupId $principalId -AllPIMGroupEligibility $pimGroupEligibilityAssignments
+                Write-Log "Active role group $($group.DisplayName) has $($allGroupUsers.Count) total users (including nested and PIM eligible)" -Level "INFO"
                 
-                foreach ($groupUser in $allGroupUsers) {
-                    $memberUserId = $groupUser.Id
+                foreach ($groupMember in $allGroupUsers) {
+                    $memberUserId = $groupMember.UserId
                     
                     # Get user details
                     try {
                         $memberUser = Get-MgUser -UserId $memberUserId -Property DisplayName,UserPrincipalName,UserType,AccountEnabled -ErrorAction Stop
-                        Write-Log "Adding user $($memberUser.DisplayName) via active group assignment $($group.DisplayName)" -Level "INFO"
+                        
+                        $membershipPath = $groupMember.GroupPath -join " → "
+                        Write-Log "Adding user $($memberUser.DisplayName) via active group assignment: $membershipPath → $($group.DisplayName) ($($groupMember.MembershipType))" -Level "INFO"
                         
                         if (-not $privilegedUsers.ContainsKey($memberUserId)) {
                             $privilegedUsers[$memberUserId] = @{
@@ -1094,13 +1318,22 @@ try {
                             }
                         }
                         
+                        # Build display name showing the membership path
+                        $displayGroupName = if ($groupMember.MembershipType -eq "PIM Eligible") {
+                            "$membershipPath [PIM]"
+                        } elseif ($groupMember.NestingLevel -gt 0) {
+                            "$membershipPath [Nested]"
+                        } else {
+                            $group.DisplayName
+                        }
+                        
                         $privilegedUsers[$memberUserId].GroupBasedRoles += @{
                             RoleName = $roleDefinition.displayName
                             RoleId = $roleId
-                            AssignmentType = "Group-Based (Active)"
-                            GroupName = if ($groupUser.NestingLevel -gt 0) { "$($group.DisplayName) (nested)" } else { $group.DisplayName }
+                            AssignmentType = if ($groupMember.MembershipType -eq "PIM Eligible") { "Group-Based (PIM)" } else { "Group-Based (Active)" }
+                            GroupName = $displayGroupName
                             GroupId = $principalId
-                            NestingLevel = $groupUser.NestingLevel
+                            NestingLevel = $groupMember.NestingLevel
                         }
                         
                         # Track role statistics
@@ -1229,17 +1462,19 @@ try {
                 $roleDefinition = Get-RoleDefinitionDetails -RoleDefinitionId $roleId
                 Write-Log "Found PIM eligible GROUP: $($group.DisplayName) with role: $($roleDefinition.displayName)" -Level "INFO"
                 
-                # Get all current members of this PIM eligible group (including nested)
-                $allGroupUsers = Get-NestedGroupMembers -GroupId $principalId
-                Write-Log "PIM eligible group $($group.DisplayName) has $($allGroupUsers.Count) current members (including nested)" -Level "INFO"
+                # Get all current members of this PIM eligible group (including nested and PIM eligible)
+                $allGroupUsers = Get-AllGroupMembers -GroupId $principalId -AllPIMGroupEligibility $pimGroupEligibilityAssignments
+                Write-Log "PIM eligible group $($group.DisplayName) has $($allGroupUsers.Count) total members (including nested and PIM eligible)" -Level "INFO"
                 
                 foreach ($groupMember in $allGroupUsers) {
-                    $memberUserId = $groupMember.Id
+                    $memberUserId = $groupMember.UserId
                     
                     # Get user details
                     try {
                         $memberUser = Get-MgUser -UserId $memberUserId -Property DisplayName,UserPrincipalName,UserType,AccountEnabled -ErrorAction Stop
-                        Write-Log "Adding user $($memberUser.DisplayName) via PIM eligible group $($group.DisplayName) (current member)" -Level "INFO"
+                        
+                        $membershipPath = $groupMember.GroupPath -join " → "
+                        Write-Log "Adding user $($memberUser.DisplayName) via PIM eligible group: $membershipPath → $($group.DisplayName) ($($groupMember.MembershipType))" -Level "INFO"
                         
                         if (-not $privilegedUsers.ContainsKey($memberUserId)) {
                             $privilegedUsers[$memberUserId] = @{
@@ -1256,11 +1491,20 @@ try {
                             }
                         }
                         
+                        # Build display name showing the membership path
+                        $displayGroupName = if ($groupMember.MembershipType -eq "PIM Eligible") {
+                            "$membershipPath → $($group.DisplayName) [PIM]"
+                        } elseif ($groupMember.NestingLevel -gt 0) {
+                            "$membershipPath → $($group.DisplayName) [Nested]"
+                        } else {
+                            $group.DisplayName
+                        }
+                        
                         $privilegedUsers[$memberUserId].PIMGroupEligibleRoles += @{
                             RoleName = $roleDefinition.displayName
                             RoleId = $roleId
-                            AssignmentType = "PIM Group Eligible (Current Member)"
-                            GroupName = if ($groupMember.NestingLevel -gt 0) { "$($group.DisplayName) (nested)" } else { $group.DisplayName }
+                            AssignmentType = if ($groupMember.MembershipType -eq "PIM Eligible") { "PIM Group Eligible (via PIM)" } else { "PIM Group Eligible (Current Member)" }
+                            GroupName = $displayGroupName
                             GroupId = $principalId
                             NestingLevel = $groupMember.NestingLevel
                         }
@@ -1400,60 +1644,75 @@ try {
                         # Check if this group has any role assignments (direct or through other means)
                         $groupRoleAssignments = $groupAssignments | Where-Object { $_.principalId -eq $groupId }
                         
-                        if ($groupRoleAssignments.Count -gt 0) {
-                            # Group has direct role assignments
-                            foreach ($groupRoleAssignment in $groupRoleAssignments) {
-                                $roleDefinition = Get-RoleDefinitionDetails -RoleDefinitionId $groupRoleAssignment.roleDefinitionId
+                        # Use the new Get-GroupRoleChain function to resolve all roles this group provides
+                        $groupRoles = Get-GroupRoleChain -GroupId $groupId `
+                            -AllActiveAssignments $activeAssignments `
+                            -AllEligibleAssignments $eligibleAssignments `
+                            -AllPIMGroupEligibility $pimGroupEligibilityAssignments
+                        
+                        if ($groupRoles.Count -gt 0) {
+                            # Group provides one or more roles (directly or through nesting)
+                            foreach ($groupRole in $groupRoles) {
+                                Write-Log "PIM group eligible role: $($groupRole.RoleName) for user $($userDetails.DisplayName) via $($groupRole.GroupPath.Count) level(s)" -Level "INFO"
                                 
-                                if ($roleDefinition) {
-                                    $roleName = $roleDefinition.displayName
-                                    Write-Log "PIM group eligible role: $roleName for user $($userDetails.DisplayName)" -Level "INFO"
-                                    
-                                    if (-not $privilegedUsers.ContainsKey($userId)) {
-                                        $privilegedUsers[$userId] = @{
-                                            UserPrincipalName = $userDetails.UserPrincipalName
-                                            DisplayName = $userDetails.DisplayName
-                                            UserId = $userId
-                                            AccountEnabled = $userDetails.AccountEnabled
-                                            ActiveRoles = @()
-                                            EligibleRoles = @()
-                                            GroupBasedRoles = @()
-                                            PIMGroupEligibleRoles = @()
-                                            MFAStatus = $null
-                                            AUProtection = $null
-                                        }
+                                if (-not $privilegedUsers.ContainsKey($userId)) {
+                                    $privilegedUsers[$userId] = @{
+                                        UserPrincipalName = $userDetails.UserPrincipalName
+                                        DisplayName = $userDetails.DisplayName
+                                        UserId = $userId
+                                        AccountEnabled = $userDetails.AccountEnabled
+                                        ActiveRoles = @()
+                                        EligibleRoles = @()
+                                        GroupBasedRoles = @()
+                                        PIMGroupEligibleRoles = @()
+                                        MFAStatus = $null
+                                        AUProtection = $null
                                     }
-                                    
-                                    $privilegedUsers[$userId].PIMGroupEligibleRoles += @{
-                                        RoleName = $roleName
-                                        RoleId = $groupRoleAssignment.roleDefinitionId
-                                        AssignmentType = "PIM Group Eligible"
-                                        GroupName = $group.DisplayName
-                                        GroupId = $groupId
-                                    }
-                                    
-                                    # Track role statistics
-                                    if (-not $roleStats.ContainsKey($roleName)) {
-                                        $roleStats[$roleName] = @{
-                                            RoleName = $roleName
-                                            RoleId = $groupRoleAssignment.roleDefinitionId
-                                            Type = "Role"
-                                            ActiveCount = 0
-                                            EligibleCount = 0
-                                            GroupBasedCount = 0
-                                            PIMGroupEligibleCount = 0
-                                            TotalUniqueUsers = 0
-                                            Users = @()
-                                        }
-                                    }
-                                    $roleStats[$roleName].PIMGroupEligibleCount++
                                 }
+                                
+                                # Build group path string for display
+                                $groupPathNames = @()
+                                foreach ($pathGroupId in $groupRole.GroupPath) {
+                                    try {
+                                        $pathGroup = Get-MgGroup -GroupId $pathGroupId -Property DisplayName -ErrorAction Stop
+                                        $groupPathNames += $pathGroup.DisplayName
+                                    }
+                                    catch {
+                                        $groupPathNames += $pathGroupId
+                                    }
+                                }
+                                $groupPathString = ($groupPathNames -join " → ")
+                                
+                                $privilegedUsers[$userId].PIMGroupEligibleRoles += @{
+                                    RoleName = $groupRole.RoleName
+                                    RoleId = $groupRole.RoleId
+                                    AssignmentType = "PIM Group Eligible"
+                                    GroupName = $groupPathString
+                                    GroupId = $groupId
+                                    NestingLevel = $groupRole.NestingLevel
+                                }
+                                
+                                # Track role statistics
+                                if (-not $roleStats.ContainsKey($groupRole.RoleName)) {
+                                    $roleStats[$groupRole.RoleName] = @{
+                                        RoleName = $groupRole.RoleName
+                                        RoleId = $groupRole.RoleId
+                                        Type = "Role"
+                                        ActiveCount = 0
+                                        EligibleCount = 0
+                                        GroupBasedCount = 0
+                                        PIMGroupEligibleCount = 0
+                                        TotalUniqueUsers = 0
+                                        Users = @()
+                                    }
+                                }
+                                $roleStats[$groupRole.RoleName].PIMGroupEligibleCount++
                             }
                         }
                         else {
-                            # Check if this is a role-assignable group (has potential for future role assignments)
+                            # No roles found - group might be role-assignable but not currently assigned
                             if ($group.IsAssignableToRole) {
-                                Write-Log "User $($userDetails.DisplayName) is PIM eligible for role-assignable group: $($group.DisplayName)" -Level "INFO"
+                                Write-Log "User $($userDetails.DisplayName) is PIM eligible for role-assignable group: $($group.DisplayName) (no current role assignments)" -Level "INFO"
                                 
                                 if (-not $privilegedUsers.ContainsKey($userId)) {
                                     $privilegedUsers[$userId] = @{
@@ -1472,10 +1731,11 @@ try {
                                 
                                 $privilegedUsers[$userId].PIMGroupEligibleRoles += @{
                                     RoleName = "PIM Group Eligible Member"
-                                    RoleId = $null
-                                    AssignmentType = "PIM Group Eligible"
+                                    RoleId = $groupId
+                                    AssignmentType = "PIM Group Eligible (No Role Assigned)"
                                     GroupName = $group.DisplayName
                                     GroupId = $groupId
+                                    NestingLevel = 0
                                 }
                                 
                                 # Track role statistics
