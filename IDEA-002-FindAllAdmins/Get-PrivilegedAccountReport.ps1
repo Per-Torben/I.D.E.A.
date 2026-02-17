@@ -2737,6 +2737,7 @@ try {
             # Create rows for active assignments
             foreach ($role in $user.ActiveRoles) {
                 $exportData += [PSCustomObject]@{
+                    PrincipalType = "User"
                     UserPrincipalName = $user.UserPrincipalName
                     DisplayName = $user.DisplayName
                     UserId = $user.UserId
@@ -2759,6 +2760,7 @@ try {
             # Create rows for eligible assignments
             foreach ($role in $user.EligibleRoles) {
                 $exportData += [PSCustomObject]@{
+                    PrincipalType = "User"
                     UserPrincipalName = $user.UserPrincipalName
                     DisplayName = $user.DisplayName
                     UserId = $user.UserId
@@ -2782,6 +2784,7 @@ try {
             if ($IncludeGroups) {
                 foreach ($role in $user.GroupBasedRoles) {
                     $exportData += [PSCustomObject]@{
+                        PrincipalType = "User"
                         UserPrincipalName = $user.UserPrincipalName
                         DisplayName = $user.DisplayName
                         UserId = $user.UserId
@@ -2806,6 +2809,7 @@ try {
             # Create rows for PIM group eligible assignments
             foreach ($role in $user.PIMGroupEligibleRoles) {
                 $exportData += [PSCustomObject]@{
+                    PrincipalType = "User"
                     UserPrincipalName = $user.UserPrincipalName
                     DisplayName = $user.DisplayName
                     UserId = $user.UserId
@@ -2823,6 +2827,55 @@ try {
                     AUProtected = if ($user.AUProtection.IsProtected) { "Yes" } else { "No" }
                     AUName = $user.AUProtection.AUName
                     RiskLevel = $riskLevel
+                }
+            }
+        }
+        
+        # Add service principals to the export
+        foreach ($sp in $privilegedServicePrincipals.Values) {
+            # Create rows for active assignments
+            foreach ($role in $sp.ActiveRoles) {
+                $exportData += [PSCustomObject]@{
+                    PrincipalType = "Service Principal"
+                    UserPrincipalName = $sp.AppId
+                    DisplayName = $sp.DisplayName
+                    UserId = $sp.ServicePrincipalId
+                    AccountEnabled = "N/A"
+                    RoleName = $role.RoleName
+                    RoleId = $role.RoleId
+                    AssignmentType = "Active"
+                    GroupName = ""
+                    GroupId = ""
+                    MFAEnabled = "N/A"
+                    MFAMethods = "N/A"
+                    MethodCount = 0
+                    HasPhoneMFA = "N/A"
+                    AUProtected = "N/A"
+                    AUName = ""
+                    RiskLevel = "N/A"
+                }
+            }
+            
+            # Create rows for eligible assignments
+            foreach ($role in $sp.EligibleRoles) {
+                $exportData += [PSCustomObject]@{
+                    PrincipalType = "Service Principal"
+                    UserPrincipalName = $sp.AppId
+                    DisplayName = $sp.DisplayName
+                    UserId = $sp.ServicePrincipalId
+                    AccountEnabled = "N/A"
+                    RoleName = $role.RoleName
+                    RoleId = $role.RoleId
+                    AssignmentType = "PIM Eligible"
+                    GroupName = ""
+                    GroupId = ""
+                    MFAEnabled = "N/A"
+                    MFAMethods = "N/A"
+                    MethodCount = 0
+                    HasPhoneMFA = "N/A"
+                    AUProtected = "N/A"
+                    AUName = ""
+                    RiskLevel = "N/A"
                 }
             }
         }
