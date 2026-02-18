@@ -1,126 +1,275 @@
-# I.D.E.A. 002 – Find All Admins
+# I.D.E.A. 002 – Privileged Account Security Audit
 
 ## Overview
-Comprehensive discovery and reporting of all administrative role assignments in Microsoft Entra ID.  
-Identifies users with elevated privileges to help maintain security hygiene and comply with least privilege principles.
+Comprehensive security audit tool that discovers **every path to administrative privileges** in Entra ID and performs automated risk assessment based on MFA strength and RMAU protection. Goes beyond simple role enumeration to resolve complex PIM chains, nested groups, and group eligibility scenarios that traditional tools miss.
 
-## Scripts
+## Scripts in This I.D.E.A.
 
-### `Find-AllAdmins.ps1`
-Complete discovery of all Entra ID role assignments with flexible reporting options.
+### `Create-PrivilegedAccountReportApp.ps1`
+Helper script to create the required app registration with certificate-based authentication and proper Graph API permissions. **Run this first** before using the report script.
 
-**Key Features**
-- Discovers all directory role assignments (built-in and custom roles)
-- Includes PIM (Privileged Identity Management) eligible assignments
-- Identifies group-based role assignments
-- Exports to multiple formats (CSV, JSON, console)
-- Filters by role name or privilege level
-- Shows last sign-in activity for admin accounts
-- Identifies dormant or stale admin accounts
-- Comprehensive logging
+### `Get-PrivilegedAccountReport.ps1`
+Main audit script - complete privileged account discovery with automated security risk assessment.
 
-**Security Benefits**
-- Visibility into all elevated privilege assignments
-- Helps identify excessive admin permissions
-- Supports regular admin access reviews
-- Aids in compliance and audit reporting
-- Detects potential security risks (dormant admins, over-privileged accounts)
+**What It Discovers**
+- ✅ **Direct Role Assignments** – Active/permanent administrative roles
+- ✅ **PIM Eligible Roles** – Users who can activate privileges on-demand
+- ✅ **Group-Based Roles** – Privileges inherited through role-assignable groups
+- ✅ **Complex PIM Chains** – Groups eligible to activate membership in other groups that grant roles (3+ levels deep)
+- ✅ **Complete Nested Groups** – Full resolution of group membership chains
+- ✅ **Service Principals** – Non-human identities with administrative roles
+- ✅ **MFA Methods** – Detailed authentication methods for each privileged user
+- ✅ **RMAU Protection** – Restricted Administrative Unit membership status
+
+**Automated Risk Assessment**
+Each privileged user receives a risk level:
+- 🚨 **CRITICAL**: No MFA enabled (immediate action required)
+- 🚨 **HIGH**: Phone/SMS MFA + No RMAU (vulnerable to SIM swapping + lateral movement)
+- ⚠️ **MEDIUM**: Single weakness (phone MFA with RMAU OR strong MFA without RMAU)
+- ✅ **LOW**: Fully secured (strong MFA + RMAU protected)
+
+**Why Use This Tool**
+- Identifies **all privilege paths** including complex PIM chains that other tools miss
+- **Automated risk scoring** eliminates manual security assessment
+- **Deduplication logic** prevents counting the same permission multiple times
+- **CSV exports** for compliance reporting and tracking remediation progress
+- **Service principal inclusion** covers non-human admin accounts
 
 ## Prerequisites
-- Microsoft Graph PowerShell SDK
-- Required Graph API permissions (automatically requested):
-  - `RoleManagement.Read.Directory`
-  - `Directory.Read.All`
-  - `AuditLog.Read.All` (for sign-in activity)
-- Security Reader or higher permissions
+
+### Required Modules
+- Microsoft Graph PowerShell SDK (automatically installed if missing)
+  - `Microsoft.Graph.Authentication`
+  - `Microsoft.Graph.Identity.SignIns`
+  - `Microsoft.Graph.Users`
+  - `Microsoft.Graph.Groups`
+  - `Microsoft.Graph.Identity.DirectoryManagement`
+
+### Graph API Permissions
+The script requires read-only permissions:
+- `User.Read.All` – Read user profiles
+- `Directory.Read.All` – Read directory data
+- `RoleManagement.Read.Directory` – Read role assignments
+- `RoleEligibilitySchedule.Read.Directory` – Read PIM eligible assignments
+- `UserAuthenticationMethod.Read.All` – Read MFA methods
+- `PrivilegedAccess.Read.AzureADGroup` – Read PIM group eligibility
+
+## Quick Start
+
+### Step 1: Create App Registration (One-Time Setup)
+```powershell
+# Run the helper script to create required app registration
+.\Create-PrivilegedAccountReportApp.ps1
+```
+
+This creates a certificate-based app registration with all required permissions and saves connection details.
+
+### Step 2: Run the Report
+```powershell
+# Establish Graph connection (follow your tenant's authentication method)
+# Then run the report:
+.\Get-PrivilegedAccountReport.ps1
+```
+
+**Note**: The script assumes an active Microsoft Graph connection. Use certificate-based authentication (recommended) or the `-UseInteractiveAuth` parameter.
 
 ## Usage
 
-### Basic Discovery
+### Certificate-Based Authentication (Recommended)
 ```powershell
-# Discover all admin role assignments
-.\Find-AllAdmins.ps1
-
-# Export to CSV
-.\Find-AllAdmins.ps1 -ExportPath ".\exports\admins.csv"
-
-# Include PIM eligible assignments
-.\Find-AllAdmins.ps1 -IncludePIM
-
-# Filter by specific roles
-.\Find-AllAdmins.ps1 -RoleFilter "Global Administrator","Privileged Role Administrator"
-
-# Find dormant admin accounts (no sign-in in 90 days)
-.\Find-AllAdmins.ps1 -ShowDormant -DormantDays 90
+# After running Create-PrivilegedAccountReportApp.ps1, use the connection details
+# to establish authentication, then run:
+.\Get-PrivilegedAccountReport.ps1
 ```
 
-### Interactive Mode
+### Interactive Authentication
 ```powershell
-.\Find-AllAdmins.ps1 -Interactive
+# Connect and run in one step using interactive auth
+.\Get-PrivilegedAccountReport.ps1 -UseInteractiveAuth
 ```
 
-The script guides you through:
-1. **Scope Selection** – All roles or specific roles
-2. **Output Options** – Console, CSV, JSON, or HTML
-3. **Filters** – PIM, dormant accounts, group-based assignments
+### Basic Report (Display Only)
+```powershell
+# Shows on-screen summary with risk statistics
+.\Get-PrivilegedAccountReport.ps1
+```
+
+### Export to CSV
+```powershell
+# After running, you'll be prompted to export to CSV
+# Two files are created in the exports/ subfolder:
+# - RoleDistribution-[timestamp].csv (roles/groups with counts)
+# - UserStatus-[timestamp].csv (detailed per-user report)
+```
+
+### Return Data for Further Processing
+```powershell
+# Capture results in variables for automation
+$results = .\Get-PrivilegedAccountReport.ps1 -ReturnData
+
+# Access the data
+$results.PrivilegedUsers      # Hashtable of all privileged users
+$results.RoleDistribution     # Role/group assignment statistics
+$results.Statistics           # Summary counts and risk stats
+```
 
 ## Output
 
-### Console Display
-- Formatted table showing: User, Role, Assignment Type, Last Sign-In
-- Summary statistics (total admins, roles, dormant accounts)
+### On-Screen Report
+The script displays:
+1. **Connection Summary** – Authentication status and permissions verification
+2. **Role Discovery Statistics** – Counts of roles, groups, assignments by type
+3. **Privileged Users Details** – Per-user breakdown showing:
+   - All role assignments with assignment type (Active, PIM Eligible, Group-Based, PIM Group Eligible)
+   - Complete privilege paths (e.g., "User → Group A → PIM Group B → Role")
+   - MFA methods and counts
+   - Phone MFA detection
+   - RMAU protection status and AU name
+   - Calculated risk level
+4. **Risk Assessment Summary** – Counts by risk level with percentages
+5. **Role Distribution** – Top roles/groups by assignment count
 
-### CSV Export
-- Full details for import into Excel or other tools
-- Columns: UserPrincipalName, DisplayName, RoleName, AssignmentType, LastSignIn, AccountEnabled
+### CSV Exports (exports/ subfolder)
 
-### JSON Export
-- Machine-readable format for automation and integration
-- Complete assignment details including PIM settings
+#### RoleDistribution-[timestamp].csv
+Role and group statistics:
+- **RoleOrGroupName**: Display name of role or group
+- **RoleId**: Unique identifier
+- **Type**: "Role" or "PIM Group"
+- **ActiveAssignments**: Count of active/permanent assignments
+- **EligibleAssignments**: Count of PIM eligible assignments
+- **GroupBasedAssignments**: Count via group membership
+- **PIMGroupEligible**: Count eligible to activate group membership
+- **TotalUniqueUsers**: Unique user count (deduplicated)
+
+#### UserStatus-[timestamp].csv
+Per-user detailed report:
+- **PrincipalType**: "User" or "Service Principal"
+- **UserPrincipalName**: Login name
+- **DisplayName**: Full name
+- **UserId**: Unique identifier
+- **AccountEnabled**: "Enabled" or "Disabled"
+- **RoleName**: Administrative role name
+- **RoleId**: Role identifier
+- **AssignmentType**: "Active", "PIM Eligible", "Group-Based", "PIM Group Eligible"
+- **GroupName**: Group providing privilege (if applicable)
+- **GroupId**: Group identifier
+- **MFAEnabled**: "Yes", "No", or "N/A" (service principals)
+- **MFAMethods**: Comma-separated list of registered methods
+- **MethodCount**: Number of MFA methods
+- **HasPhoneMFA**: "Yes" or "No"
+- **AUProtected**: "Yes" or "No" (RMAU membership)
+- **AUName**: Name of Restricted AU (if protected)
+- **RiskLevel**: "Critical (No MFA)", "High (Phone MFA + No AU)", "Medium (MFA, No AU)", "Medium (Phone MFA, Has AU)", "Low (Secure)", or "N/A"
+
+## Understanding Risk Levels
+
+### Why Phone MFA is Risky
+Phone/SMS-based MFA is vulnerable to:
+- SIM swapping attacks (social engineering at mobile carriers)
+- SMS interception
+- Number porting attacks
+
+Strong MFA methods (FIDO2, Microsoft Authenticator push, Windows Hello) are resistant to these attacks.
+
+### Why RMAU Protection Matters
+Restricted Administrative Units prevent:
+- Lateral movement between admin accounts
+- Privilege escalation attacks
+- Unauthorized scope expansion
+
+When privileged accounts are in RMAUs, only specific administrators can modify them.
+
+### Combined Risk Assessment
+| MFA Method | RMAU Protected | Risk Level | Rationale |
+|------------|----------------|------------|-----------|
+| None | No | 🚨 CRITICAL | No authentication protection |
+| Phone/SMS | No | 🚨 HIGH | Vulnerable to SIM swap + lateral movement |
+| Phone/SMS | Yes | ⚠️ MEDIUM | RMAU protects from escalation, but MFA is weak |
+| Strong | No | ⚠️ MEDIUM | Good MFA, but no containment of privileges |
+| Strong | Yes | ✅ LOW | Fully secured with strong auth + privilege containment |
+
+## Complex Privilege Path Examples
+
+### Scenario 1: Direct PIM Eligible
+```
+User → [PIM Eligible] → Global Administrator
+```
+User can activate Global Administrator role directly.
+
+### Scenario 2: Group-Based Active
+```
+User → Group Membership → PIM-GlobalAdmins → Global Administrator
+```
+User has active membership in a role-assignable group.
+
+### Scenario 3: PIM Group Eligible (2 levels)
+```
+User → [PIM Eligible Member] → PIM-GlobalAdmins → Global Administrator
+```
+User can activate membership in a group that grants Global Administrator.
+
+### Scenario 4: Complex PIM Chain (3+ levels)
+```
+User → [PIM Eligible] → Group A → [PIM Eligible] → Group B → User Administrator
+```
+User is eligible to activate membership in Group A, which is itself eligible to activate membership in Group B, which grants the User Administrator role.
+
+**This tool resolves all these scenarios automatically.**
+
+## Deduplication Logic
+
+The script prevents duplicate reporting when the same permission is accessible through multiple paths:
+1. **Same Role via Different Paths**: If PIM eligibility exists, active group membership for the same role is not reported separately
+2. **Redundant Group Membership**: "PIM Group Active Member" is filtered when the group actually grants specific roles
+3. **Multi-level Chains**: Each unique permission path is reported once, even if it involves multiple groups
 
 ## Security Considerations
-- Run regularly to maintain admin hygiene
-- Review dormant admin accounts for potential removal
-- Validate group-based assignments follow least privilege
-- Monitor PIM eligible assignments for appropriate justification
-- Use results for periodic access reviews
-- Consider revoking unnecessary admin privileges
 
-## Configuration Options
-- **Role Filters**: Focus on specific critical roles
-- **Dormant Threshold**: Define inactive period (default: 90 days)
-- **Export Path**: Customize output location
-- **Include Groups**: Show group-based role assignments
-- **PIM Details**: Expand eligible assignment settings
+**Immediate Actions Required**
+- 🚨 **Critical Risk Users**: Enable MFA immediately
+- 🚨 **High Risk Users**: Replace phone MFA with FIDO2/Authenticator and add to RMAU
 
-## Examples
+**Best Practices**
+- Run this report monthly to track security improvements
+- Export CSVs for compliance documentation and trend analysis
+- Focus remediation on Critical and High risk users first
+- Use RMAU protection for all Tier 0 administrators
+- Require FIDO2 keys for Global Administrators and Privileged Role Administrators
+- Review PIM eligible assignments for appropriate business justification
 
-### Find all Global Administrators
-```powershell
-.\Find-AllAdmins.ps1 -RoleFilter "Global Administrator" -ExportPath ".\ga-admins.csv"
+## Troubleshooting
+
+### Permission Errors
+If you see permission-related errors, verify the app registration has all required permissions and admin consent has been granted.
+
+### MFA Methods Show "N/A"
+Requires `UserAuthenticationMethod.Read.All` permission. Without it, MFA assessment cannot be performed.
+
+### No RMAU Data
+Users not in any Restricted Administrative Unit will show "No" for AUProtected. Consider creating RMAUs for high-privilege accounts.
+
+### Long Execution Time
+For large tenants with thousands of users and complex group structures, the script may take 5-10 minutes. Progress is logged to console.
+
+## Files and Folders
+
 ```
-
-### Security audit - find dormant admins
-```powershell
-.\Find-AllAdmins.ps1 -ShowDormant -DormantDays 60 -ExportPath ".\dormant-admins.csv"
+IDEA-002-FindAllAdmins/
+├── Get-PrivilegedAccountReport.ps1       # Main script
+├── Create-PrivilegedAccountReportApp.ps1 # Helper for app registration
+├── README.md                             # This file
+├── Logs/                                 # Execution logs (auto-created)
+└── exports/                              # CSV exports (auto-created)
+    ├── RoleDistribution-[timestamp].csv
+    └── UserStatus-[timestamp].csv
 ```
-
-### Complete PIM report
-```powershell
-.\Find-AllAdmins.ps1 -IncludePIM -ExportFormat JSON -ExportPath ".\pim-assignments.json"
-```
-
-## Notes
-- Sign-in activity requires AuditLog.Read.All permission
-- PIM data requires additional PIM read permissions
-- Large tenants may take several minutes to complete discovery
-- Results are point-in-time snapshots
 
 ## Author
-Per-Torben Sørensen with contributions from GitHub Copilot
+Per-Torben Sørensen
 
 ## Version
-1.0 - Initial Release
+1.0
 
 ## Last Updated
-February 16, 2026
+February 17, 2026

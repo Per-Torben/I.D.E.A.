@@ -1,54 +1,61 @@
 <#
 .SYNOPSIS
-    Generates a comprehensive security report of privileged accounts including role assignments, PIM eligibility, 
-    MFA status, and risk assessment based on authentication methods and Restricted AU protection.
+    I.D.E.A. 002 - Comprehensive security audit of all privileged accounts in Entra ID with automated risk assessment.
 
 .DESCRIPTION
-    This script connects to Microsoft Graph and analyzes all principals (users, service principals, groups) 
-    with privileged role assignments to identify security risks and compliance gaps.
+    Part of Identity Engineering Artifacts (I.D.E.A.) 002 - Privileged Account Security Audit
     
-    WHAT IT DETECTS:
-    - Active (permanent) role assignments
-    - PIM (Privileged Identity Management) eligible role assignments  
-    - Group-based role assignments (via role-assignable groups)
-    - PIM group eligibility (users eligible to activate membership in role-assignable groups)
-    - MFA authentication methods for each privileged user
-    - Restricted Administrative Unit (RMAU) protection status
+    This script discovers and analyzes every path to administrative privileges in your Entra ID tenant, 
+    providing actionable security insights to identify and remediate risky configurations.
     
-    WHY IT CHECKS THESE:
-    - Privileged accounts are high-value targets requiring the strongest security controls
-    - Phone/SMS-based MFA is vulnerable to SIM swapping attacks
-    - Restricted Administrative Units prevent lateral movement and privilege escalation
-    - The combination of weak MFA + no RMAU protection = critical security risk
+    SETUP: First run Create-PrivilegedAccountReportApp.ps1 to create the required app registration 
+    with certificate-based authentication and proper Graph API permissions. Then establish a Graph 
+    connection before running this report script.
+    
+    WHAT THIS SCRIPT DISCOVERS:
+    ✓ Direct role assignments (active/permanent privileges)
+    ✓ PIM eligible role assignments (can activate privileges)
+    ✓ Group-based role assignments (privileges inherited from groups)
+    ✓ Complex PIM chains (groups eligible to activate membership in other groups that grant roles)
+    ✓ Complete nested group resolution (tracks privilege paths through multiple group layers)
+    ✓ Service principals with administrative roles
+    ✓ MFA authentication methods for each privileged user
+    ✓ Restricted Administrative Unit (RMAU) protection status
+    
+    ASSIGNMENT TYPE BADGES EXPLAINED:
+    [Active]     = Direct role assignment - user has permanent/standing administrative role
+    [PIM]        = PIM Eligible - user can activate the administrative role on-demand
+    [Group]      = Group-Based - user is an active member of a group that has the administrative role
+    [PIM-Group]  = PIM Group Eligible - user can activate membership in a group that has the administrative role
+    
+    Key Differences:
+    • [Group] users CURRENTLY HAVE the privilege through active group membership
+    • [PIM-Group] users CAN OBTAIN the privilege by activating group membership (requires PIM activation)
+    • [Group] includes nested groups - user may be in Group A, which is in Group B that has the role
+    • [PIM-Group] includes complex chains - user eligible for Group A, which is eligible for Group B with role
     
     SECURITY RISK ASSESSMENT:
-    The script calculates risk levels based on two critical security factors:
+    Each privileged user receives a risk level based on two critical security factors:
     
-    1. MFA Method Security:
-       - SECURE: FIDO2, Microsoft Authenticator (push notification), Windows Hello, Software OATH
-       - VULNERABLE: Phone/SMS authentication (susceptible to SIM swapping)
-       - CRITICAL: No MFA enabled
+    🚨 CRITICAL: No MFA enabled (immediate security risk)
+    🚨 HIGH: Phone/SMS MFA + No RMAU protection (vulnerable to SIM swapping + lateral movement)
+    ⚠️ MEDIUM: Either phone MFA with RMAU OR strong MFA without RMAU (single weakness)
+    ✅ LOW: Strong MFA (FIDO2/Authenticator) + RMAU protection (fully secured)
     
-    2. Restricted Administrative Unit (RMAU) Protection:
-       - PROTECTED: User is member of a restricted AU (isMemberManagementRestricted = true)
-       - UNPROTECTED: User is not in any restricted AU
+    WHY THESE CHECKS MATTER:
+    • Phone/SMS MFA is vulnerable to SIM swapping attacks
+    • Restricted Administrative Units prevent privilege escalation and lateral movement
+    • Privileged accounts are the highest-value targets for attackers
+    • Combined weaknesses (phone MFA + no RMAU) create critical security gaps
     
-    RISK LEVELS EXPLAINED:
-    - ✅ LOW RISK (Fully Secure): Strong MFA (no phone) + RMAU protection
-         Example: FIDO2 or Authenticator app + member of restricted AU
-         
-    - ⚠️ MEDIUM RISK (Single Issue): Either vulnerable MFA OR missing RMAU protection
-         - Phone MFA Only: Phone/SMS MFA but protected by RMAU
-         - No AU Only: Strong MFA but not in restricted AU
-         
-    - 🚨 HIGH RISK (Multiple Issues): Phone/SMS MFA + No RMAU protection
-         Example: SMS-based MFA without restricted AU membership
-         This combination provides minimal protection against sophisticated attacks
-         
-    - ❓ UNKNOWN RISK: MFA status cannot be determined (missing permissions or RAU access)
+    OUTPUT FORMATS:
+    • On-screen summary with risk statistics and detailed findings
+    • CSV export: RoleDistribution (roles/groups with assignment counts)
+    • CSV export: UserStatus (per-user details with roles, MFA methods, risk levels)
     
-    Output is account-focused, showing each principal's complete privilege profile with 
-    security status, risk indicators, and detailed authentication method analysis.
+    The script resolves ALL privilege paths including complex scenarios where users are 
+    eligible to activate membership in groups that are themselves eligible to activate 
+    membership in other groups that grant administrative roles.
 
 .PARAMETER LogDirectory
     Directory path for log files. Defaults to .\Logs
@@ -65,17 +72,20 @@
     When not specified, assumes app-based (certificate or client secret) authentication is already established.
 
 .EXAMPLE
-    # First establish Graph connection with app-based auth, then run the report:
+    # Setup (one-time): Create app registration with required permissions
+    .\Create-PrivilegedAccountReportApp.ps1
+    
+    # Then establish Graph connection and run the report:
     .\Get-PrivilegedAccountReport.ps1
     Runs the report, displays on-screen summary, and prompts for CSV export.
 
 .EXAMPLE
-    .\Get-PrivilegedAccountReport.ps1 -IncludeGroups
-    Includes group-based role assignments in the report.
+    .\Get-PrivilegedAccountReport.ps1 -UseInteractiveAuth
+    Uses interactive authentication (prompts for credentials) instead of app-based auth.
 
 .EXAMPLE
-    .\Get-PrivilegedAccountReport.ps1 -UseInteractiveAuth
-    Uses interactive authentication (prompts for credentials).
+    .\Get-PrivilegedAccountReport.ps1 -IncludeGroups $false
+    Excludes group-based and PIM group assignments from the report (groups included by default).
 
 .EXAMPLE
     $results = .\Get-PrivilegedAccountReport.ps1 -ReturnData
@@ -2318,20 +2328,29 @@ try {
                 Write-Host " " -NoNewline
             }
             
-            # Risk indicator - show specific risk level
+            # Risk indicator - show specific risk level based on combined MFA and AU status
             $hasPhoneRisk = ($mfaStatus.HasPhone -eq $true)
             $hasAURisk = ($user.AUProtection.IsProtected -eq $false)
+            $hasNoMFA = ($mfaStatus.MFACapable -eq $false)
             
-            if ($hasPhoneRisk -and $hasAURisk) {
-                Write-Host "⚠⚠ [HIGH RISK]" -NoNewline -ForegroundColor Red
+            if ($null -eq $mfaStatus.MFACapable) {
+                Write-Host "? [UNKNOWN RISK]" -NoNewline -ForegroundColor DarkGray
+                Write-Host " " -NoNewline
+            }
+            elseif ($hasNoMFA) {
+                Write-Host "🚨 [CRITICAL]" -NoNewline -ForegroundColor Red
+                Write-Host " " -NoNewline
+            }
+            elseif ($hasPhoneRisk -and $hasAURisk) {
+                Write-Host "🚨 [HIGH RISK]" -NoNewline -ForegroundColor Red
                 Write-Host " " -NoNewline
             }
             elseif ($hasPhoneRisk -or $hasAURisk) {
-                Write-Host "⚠ [MEDIUM RISK]" -NoNewline -ForegroundColor Yellow
+                Write-Host "⚠️ [MEDIUM RISK]" -NoNewline -ForegroundColor Yellow
                 Write-Host " " -NoNewline
             }
-            elseif ($mfaStatus.HasPhone -eq $false -and $user.AUProtection.IsProtected -eq $true) {
-                Write-Host "✓ [SECURE]" -NoNewline -ForegroundColor Green
+            else {
+                Write-Host "✅ [LOW RISK]" -NoNewline -ForegroundColor Green
                 Write-Host " " -NoNewline
             }
             
@@ -2476,33 +2495,70 @@ try {
         
         # Show account status for users
         if ($account.Type -eq "User") {
-            Write-Host "   Status: " -NoNewline -ForegroundColor DarkGray
+            # Calculate risk level (same logic as CSV export)
+            $mfaStatus = $account.MFAStatus
+            $hasPhoneRisk = ($mfaStatus.HasPhone -eq $true)
+            $hasAURisk = ($account.AUProtection.IsProtected -eq $false)
+            $hasNoMFA = ($mfaStatus.MFACapable -eq $false)
+            
+            $riskLevel = if ($null -eq $mfaStatus.MFACapable) {
+                "Unknown"
+            } elseif ($hasNoMFA) {
+                "Critical"
+            } elseif ($hasPhoneRisk -and $hasAURisk) {
+                "High"
+            } elseif ($hasPhoneRisk -and -not $hasAURisk) {
+                "Medium"
+            } elseif (-not $hasPhoneRisk -and $hasAURisk) {
+                "Medium"
+            } else {
+                "Low"
+            }
+            
+            # Display comprehensive security status line
+            Write-Host "   Risk: " -NoNewline -ForegroundColor DarkGray
+            switch ($riskLevel) {
+                "Critical" { Write-Host "🚨 CRITICAL" -NoNewline -ForegroundColor Red }
+                "High" { Write-Host "🚨 HIGH" -NoNewline -ForegroundColor Red }
+                "Medium" { Write-Host "⚠️ MEDIUM" -NoNewline -ForegroundColor Yellow }
+                "Low" { Write-Host "✅ LOW" -NoNewline -ForegroundColor Green }
+                "Unknown" { Write-Host "❓ UNKNOWN" -NoNewline -ForegroundColor DarkGray }
+            }
+            
+            # Account enabled/disabled status
+            Write-Host " | Account: " -NoNewline -ForegroundColor DarkGray
             if ($account.AccountEnabled) {
                 Write-Host "✅ Enabled" -NoNewline -ForegroundColor Green
             } else {
                 Write-Host "❌ Disabled" -NoNewline -ForegroundColor Red
             }
             
-            # MFA status for users
-            $mfaStatus = $account.MFAStatus
+            # MFA status
             Write-Host " | MFA: " -NoNewline -ForegroundColor DarkGray
             if ($null -eq $mfaStatus.MFACapable) {
-                Write-Host "❓ Unknown" -NoNewline -ForegroundColor Yellow
+                Write-Host "❓ Unknown" -NoNewline -ForegroundColor DarkGray
             } elseif ($mfaStatus.MFACapable) {
-                Write-Host "✅ Enabled" -NoNewline -ForegroundColor Green
-                if ($mfaStatus.HasPhone) {
-                    Write-Host " ⚠️ (Phone Risk)" -NoNewline -ForegroundColor Yellow
-                }
+                Write-Host "✅ Yes" -NoNewline -ForegroundColor Green
             } else {
-                Write-Host "❌ Disabled" -NoNewline -ForegroundColor Red
+                Write-Host "❌ No" -NoNewline -ForegroundColor Red
             }
             
-            # AU protection for users
-            Write-Host " | AU: " -NoNewline -ForegroundColor DarkGray
-            if ($account.AUProtection.IsProtected) {
-                Write-Host "🔒 Protected" -ForegroundColor Green
+            # SMS/Phone MFA status (separate field)
+            Write-Host " | SMS: " -NoNewline -ForegroundColor DarkGray
+            if ($null -eq $mfaStatus.HasPhone) {
+                Write-Host "❓ Unknown" -NoNewline -ForegroundColor DarkGray
+            } elseif ($mfaStatus.HasPhone -eq $true) {
+                Write-Host "⚠️ Yes" -NoNewline -ForegroundColor Yellow
             } else {
-                Write-Host "🔓 Not Protected" -ForegroundColor Red
+                Write-Host "✅ No" -NoNewline -ForegroundColor Green
+            }
+            
+            # RMAU protection status
+            Write-Host " | RMAU: " -NoNewline -ForegroundColor DarkGray
+            if ($account.AUProtection.IsProtected) {
+                Write-Host "🔒 Yes" -ForegroundColor Green
+            } else {
+                Write-Host "🔓 No" -ForegroundColor Red
             }
         } else {
             Write-Host ""
@@ -2536,14 +2592,48 @@ try {
         # Group-Based Roles (for users)
         if ($account.GroupBasedRoles.Count -gt 0) {
             $hasAnyRoles = $true
-            Write-Host ""
-            Write-Host "   🔵 ROLES VIA GROUP MEMBERSHIP ($($account.GroupBasedRoles.Count)):" -ForegroundColor Blue
+            
+            # Filter out redundant "PIM Group Active Member" entries
+            # Skip if the same group (or its nested path) grants actual roles
+            $filteredGroupRoles = @()
             foreach ($role in $account.GroupBasedRoles) {
-                Write-Host "      • " -NoNewline -ForegroundColor DarkGray
-                Write-Host "$($role.RoleName)" -NoNewline -ForegroundColor Blue
-                Write-Host " [via Group: " -NoNewline -ForegroundColor DarkGray
-                Write-Host "$($role.GroupName)" -NoNewline -ForegroundColor Cyan
-                Write-Host "]" -ForegroundColor DarkGray
+                if ($role.RoleName -eq "PIM Group Active Member") {
+                    # Check if this group appears in the path of any actual roles
+                    $groupGrantsActualRoles = $false
+                    $baseGroupName = $role.GroupName
+                    
+                    foreach ($otherRole in ($account.GroupBasedRoles + $account.PIMGroupEligibleRoles)) {
+                        if ($otherRole.RoleName -ne "PIM Group Active Member") {
+                            # Check if the base group name appears at the start of the other role's group path
+                            # This handles cases like "PIM – PIM – User admin" being the start of 
+                            # "PIM – PIM – User admin → PIM - User admin [PIM]"
+                            if ($otherRole.GroupName -eq $baseGroupName -or 
+                                $otherRole.GroupName -like "$baseGroupName *" -or
+                                $otherRole.GroupName -like "$baseGroupName → *") {
+                                $groupGrantsActualRoles = $true
+                                break
+                            }
+                        }
+                    }
+                    
+                    if (-not $groupGrantsActualRoles) {
+                        $filteredGroupRoles += $role
+                    }
+                } else {
+                    $filteredGroupRoles += $role
+                }
+            }
+            
+            if ($filteredGroupRoles.Count -gt 0) {
+                Write-Host ""
+                Write-Host "   🔵 ROLES VIA GROUP MEMBERSHIP ($($filteredGroupRoles.Count)):" -ForegroundColor Blue
+                foreach ($role in $filteredGroupRoles) {
+                    Write-Host "      • " -NoNewline -ForegroundColor DarkGray
+                    Write-Host "$($role.RoleName)" -NoNewline -ForegroundColor Blue
+                    Write-Host " [via Group: " -NoNewline -ForegroundColor DarkGray
+                    Write-Host "$($role.GroupName)" -NoNewline -ForegroundColor Cyan
+                    Write-Host "]" -ForegroundColor DarkGray
+                }
             }
         }
         
@@ -2580,7 +2670,34 @@ try {
         
         # Summary line
         if ($hasAnyRoles) {
-            $totalRoles = $account.ActiveRoles.Count + $account.EligibleRoles.Count + $account.GroupBasedRoles.Count + $account.PIMGroupEligibleRoles.Count
+            # Calculate filtered group roles count (exclude redundant "PIM Group Active Member" entries)
+            $filteredGroupRolesCount = 0
+            foreach ($role in $account.GroupBasedRoles) {
+                if ($role.RoleName -eq "PIM Group Active Member") {
+                    # Check if this group appears in the path of any actual roles
+                    $groupGrantsActualRoles = $false
+                    $baseGroupName = $role.GroupName
+                    
+                    foreach ($otherRole in ($account.GroupBasedRoles + $account.PIMGroupEligibleRoles)) {
+                        if ($otherRole.RoleName -ne "PIM Group Active Member") {
+                            # Check if the base group name appears at the start of the other role's group path
+                            if ($otherRole.GroupName -eq $baseGroupName -or 
+                                $otherRole.GroupName -like "$baseGroupName *" -or
+                                $otherRole.GroupName -like "$baseGroupName → *") {
+                                $groupGrantsActualRoles = $true
+                                break
+                            }
+                        }
+                    }
+                    if (-not $groupGrantsActualRoles) {
+                        $filteredGroupRolesCount++
+                    }
+                } else {
+                    $filteredGroupRolesCount++
+                }
+            }
+            
+            $totalRoles = $account.ActiveRoles.Count + $account.EligibleRoles.Count + $filteredGroupRolesCount + $account.PIMGroupEligibleRoles.Count
             Write-Host ""
             Write-Host "   📊 TOTAL PRIVILEGE ASSIGNMENTS: " -NoNewline -ForegroundColor DarkGray
             Write-Host "$totalRoles" -ForegroundColor White

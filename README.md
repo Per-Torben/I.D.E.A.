@@ -28,6 +28,33 @@ Break‑glass accounts provide guaranteed administrative access when normal acce
 
 ---
 
+### [I.D.E.A. 002 – Privileged Account Security Audit](IDEA-002-FindAllAdmins/)
+Comprehensive security audit tool that discovers **every path to administrative privileges** in Entra ID and performs automated risk assessment.  
+Resolves complex PIM chains, nested groups, and group eligibility scenarios to provide complete visibility into privileged access.
+
+**Key Capabilities**
+- Discovers all privilege paths: direct roles, PIM eligible, group-based, and complex multi-level PIM chains
+- Automated security risk assessment based on MFA strength and RMAU protection
+- Resolves 3+ level PIM chains (groups eligible for groups that grant roles)
+- Complete nested group resolution with circular reference prevention
+- Deduplication logic prevents counting same permission multiple times
+- Includes service principals with administrative roles
+- Detailed MFA method analysis (FIDO2, Authenticator, Phone/SMS detection)
+- Checks Restricted Administrative Unit (RMAU) protection status
+- Exports to CSV: RoleDistribution and UserStatus reports
+
+**Security Risk Levels**
+- 🚨 **CRITICAL**: No MFA enabled (immediate action required)
+- 🚨 **HIGH**: Phone/SMS MFA + No RMAU (SIM swap vulnerable + lateral movement risk)
+- ⚠️ **MEDIUM**: Single weakness (phone MFA with RMAU OR strong MFA without RMAU)
+- ✅ **LOW**: Fully secured (strong MFA + RMAU protected)
+
+**Use Case:** Complete privileged access inventory with automated security scoring. Identifies high-risk admin accounts requiring immediate MFA upgrades or RMAU protection. Essential for compliance reporting, security audits, and zero-trust implementation.
+
+📖 **[Full Documentation](IDEA-002-FindAllAdmins/README.md)**
+
+---
+
 ## Getting Started
 1. Browse the I.D.E.A. folders above  
 2. Read the specific README.md for prerequisites and usage  
