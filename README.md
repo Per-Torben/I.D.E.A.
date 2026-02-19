@@ -29,11 +29,11 @@ Break‑glass accounts provide guaranteed administrative access when normal acce
 ---
 
 ### [I.D.E.A. 002 – Privileged Account Security Audit](IDEA-002-FindAllAdmins/)
-Comprehensive security audit tool that discovers **every path to administrative privileges** in Entra ID and performs automated risk assessment.  
-Resolves complex PIM chains, nested groups, and group eligibility scenarios to provide complete visibility into privileged access.
+Comprehensive security audit tool that discovers **administrative privilege assignments and paths** in Entra ID and performs automated risk assessment.  
+Resolves complex PIM chains, nested groups, and group eligibility scenarios to provide visibility into privileged access.
 
 **Key Capabilities**
-- Discovers all privilege paths: direct roles, PIM eligible, group-based, and complex multi-level PIM chains
+- Discovers privilege paths: direct roles, PIM eligible, group-based, and complex multi-level PIM chains
 - Automated security risk assessment based on MFA strength and RMAU protection
 - Resolves 3+ level PIM chains (groups eligible for groups that grant roles)
 - Complete nested group resolution with circular reference prevention

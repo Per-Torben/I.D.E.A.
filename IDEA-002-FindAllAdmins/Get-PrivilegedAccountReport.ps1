@@ -5,8 +5,9 @@
 .DESCRIPTION
     Part of Identity Engineering Artifacts (I.D.E.A.) 002 - Privileged Account Security Audit
     
-    This script discovers and analyzes every path to administrative privileges in your Entra ID tenant, 
-    providing actionable security insights to identify and remediate risky configurations.
+    This script performs comprehensive discovery and analysis of administrative privilege assignments 
+    in your Entra ID tenant, providing actionable security insights to identify and remediate risky 
+    configurations.
     
     SETUP: First run Create-PrivilegedAccountReportApp.ps1 to create the required app registration 
     with certificate-based authentication and proper Graph API permissions. Then establish a Graph 
@@ -53,9 +54,9 @@
     • CSV export: RoleDistribution (roles/groups with assignment counts)
     • CSV export: UserStatus (per-user details with roles, MFA methods, risk levels)
     
-    The script resolves ALL privilege paths including complex scenarios where users are 
-    eligible to activate membership in groups that are themselves eligible to activate 
-    membership in other groups that grant administrative roles.
+    The script resolves complex privilege paths including scenarios where users are eligible 
+    to activate membership in groups that are themselves eligible to activate membership in 
+    other groups that grant administrative roles (multi-level PIM chains).
 
 .PARAMETER LogDirectory
     Directory path for log files. Defaults to .\Logs
