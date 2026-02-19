@@ -1,7 +1,7 @@
 # I.D.E.A. 002 – Privileged Account Security Audit
 
 ## Overview
-Comprehensive security audit tool that discovers **administrative privilege assignments and paths** in Entra ID and performs automated risk assessment based on MFA strength and RMAU protection. Goes beyond simple role enumeration to resolve complex PIM chains, nested groups, and group eligibility scenarios that traditional tools miss.
+Comprehensive security audit tool that discovers **administrative privilege assignments and paths** in Entra ID and performs automated risk assessment based on MFA strength and RMAU protection. Goes beyond simple role enumeration to resolve complex PIM chains, nested groups, and group eligibility scenarios that traditional tools miss. Related blogpost: https://agderinthe.cloud/2026/02/19/i-d-e-a-002-will-the-real-admin-please-stand-up/
 
 ## Scripts in This I.D.E.A.
 

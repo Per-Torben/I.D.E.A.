@@ -3,6 +3,7 @@
 <#
 .SYNOPSIS
     Creates a Microsoft Entra ID application registration for Privileged Account Report script.
+    Related blog post: https://agderinthe.cloud/2026/02/19/i-d-e-a-002-will-the-real-admin-please-stand-up/
 
 .DESCRIPTION
     This script creates an application registration in Microsoft Entra ID specifically configured
