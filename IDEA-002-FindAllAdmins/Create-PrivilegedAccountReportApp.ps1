@@ -10,6 +10,12 @@
     attaches it to the application, assigns only the required API permissions for privileged account
     reporting, and attempts to grant admin consent.
     
+    IMPORTANT: Run this script on the same machine where you plan to run Get-PrivilegedAccountReport.ps1.
+    The self-signed certificate is created and stored in the local computer's certificate store for
+    authentication. If you need to run the report from a different machine, you'll need to export
+    and import the certificate, or configure alternative authentication methods (interactive auth,
+    client secret, etc.).
+    
     The application is configured with minimal required permissions:
     - User.Read.All
     - Directory.Read.All

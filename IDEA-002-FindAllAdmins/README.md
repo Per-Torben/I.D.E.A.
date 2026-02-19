@@ -1,7 +1,7 @@
 # I.D.E.A. 002 – Privileged Account Security Audit
 
 ## Overview
-Comprehensive security audit tool that discovers **every path to administrative privileges** in Entra ID and performs automated risk assessment based on MFA strength and RMAU protection. Goes beyond simple role enumeration to resolve complex PIM chains, nested groups, and group eligibility scenarios that traditional tools miss.
+Comprehensive security audit tool that discovers **administrative privilege assignments and paths** in Entra ID and performs automated risk assessment based on MFA strength and RMAU protection. Goes beyond simple role enumeration to resolve complex PIM chains, nested groups, and group eligibility scenarios that traditional tools miss.
 
 ## Scripts in This I.D.E.A.
 
@@ -29,7 +29,7 @@ Each privileged user receives a risk level:
 - ✅ **LOW**: Fully secured (strong MFA + RMAU protected)
 
 **Why Use This Tool**
-- Identifies **all privilege paths** including complex PIM chains that other tools miss
+- Identifies **complex privilege paths** including multi-level PIM chains that other tools miss
 - **Automated risk scoring** eliminates manual security assessment
 - **Deduplication logic** prevents counting the same permission multiple times
 - **CSV exports** for compliance reporting and tracking remediation progress
@@ -63,6 +63,10 @@ The script requires read-only permissions:
 ```
 
 This creates a certificate-based app registration with all required permissions and saves connection details.
+
+**Important**: Run this script on the same machine where you plan to run the main report script. It creates a self-signed certificate stored in the local computer's certificate store for authentication. If you need to run the report from a different machine, you can either:
+- Export and import the certificate to the target machine
+- Configure alternative authentication methods (interactive auth using `-UseInteractiveAuth`, client secrets, etc.)
 
 ### Step 2: Run the Report
 ```powershell
