@@ -600,11 +600,21 @@ function Get-SpecificPolicies {
 }
 
 function Remove-FromConditionalAccessPolicies {
+    param (
+        [object[]]$BreakGlassAccounts
+    )
     Write-Log "Excluding break-glass accounts from Conditional Access policies..." -Level Info
     
     try {
-        $bg = Get-MgBetaUser -Filter "startswith(userPrincipalName,'$($Config.AccountPrefix)')"
-        $allPolicies = Get-MgBetaIdentityConditionalAccessPolicy
+        # Use the accounts that were passed in (supports both prefix-based and manually selected accounts)
+        $bg = $BreakGlassAccounts
+        if (-not $bg -or $bg.Count -eq 0) {
+            Write-Log "No break-glass accounts provided to exclude from CA policies" -Level Error
+            Write-Host "`n✗ No break-glass accounts available. Cannot update CA policies." -ForegroundColor Red
+            return
+        }
+        Write-Log "Operating on $($bg.Count) break-glass account(s): $(($bg | ForEach-Object { $_.UserPrincipalName }) -join ', ')" -Level Info
+        $allPolicies = Get-MgBetaIdentityConditionalAccessPolicy -All
         
         Write-Log "Found $($allPolicies.Count) Conditional Access policies" -Level Info
         
@@ -698,18 +708,42 @@ function Remove-FromConditionalAccessPolicies {
                 $exclude = @($policy.Conditions.Users.ExcludeUsers) + ($bg.Id)
                 $uniqueExcludes = $exclude | Select-Object -Unique | Where-Object { $_ -ne $null }
                 
-                # Get full policy object for proper update
-                $fullPolicy = Get-MgBetaIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id
-                $fullPolicy.Conditions.Users.ExcludeUsers = $uniqueExcludes
-                
-                Update-MgBetaIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id -BodyParameter @{
-                    conditions = $fullPolicy.Conditions
+                if ($WhatIf) {
+                    Write-Host "  WHATIF: $($policy.DisplayName) [$statusMsg]" -ForegroundColor Cyan
+                    Write-Log "WHATIF: Would exclude break-glass accounts from policy '$($policy.DisplayName)' [$statusMsg]" -Level Info
+                    $successCount++
                 }
-                
-                $addedCount = $item.MissingAccounts.Count
-                Write-Host "  ✓ $($policy.DisplayName) [Added $addedCount account(s)]" -ForegroundColor Green
-                Write-Log "Updated policy: $($policy.DisplayName) - Added $addedCount break-glass account(s)" -Level Success
-                $successCount++
+                else {
+                    # Get full policy object to preserve existing conditions
+                    $fullPolicy = Get-MgBetaIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id
+                    
+                    # Build an explicit hashtable for the users conditions - SDK proxy objects do not
+                    # serialize mutations reliably, so we construct the body from scratch.
+                    $usersBody = @{
+                        includeUsers  = @($fullPolicy.Conditions.Users.IncludeUsers  | Where-Object { $_ })
+                        excludeUsers  = @($uniqueExcludes)
+                        includeGroups = @($fullPolicy.Conditions.Users.IncludeGroups | Where-Object { $_ })
+                        excludeGroups = @($fullPolicy.Conditions.Users.ExcludeGroups | Where-Object { $_ })
+                        includeRoles  = @($fullPolicy.Conditions.Users.IncludeRoles  | Where-Object { $_ })
+                        excludeRoles  = @($fullPolicy.Conditions.Users.ExcludeRoles  | Where-Object { $_ })
+                    }
+                    # Include GuestsOrExternalUsers if present
+                    if ($fullPolicy.Conditions.Users.IncludeGuestsOrExternalUsers) {
+                        $usersBody['includeGuestsOrExternalUsers'] = $fullPolicy.Conditions.Users.IncludeGuestsOrExternalUsers
+                    }
+                    if ($fullPolicy.Conditions.Users.ExcludeGuestsOrExternalUsers) {
+                        $usersBody['excludeGuestsOrExternalUsers'] = $fullPolicy.Conditions.Users.ExcludeGuestsOrExternalUsers
+                    }
+
+                    Update-MgBetaIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id -BodyParameter @{
+                        conditions = @{ users = $usersBody }
+                    } -ErrorAction Stop
+
+                    $addedCount = $item.MissingAccounts.Count
+                    Write-Host "  ✓ $($policy.DisplayName) [Added $addedCount account(s)]" -ForegroundColor Green
+                    Write-Log "Updated policy: $($policy.DisplayName) - Added $addedCount break-glass account(s)" -Level Success
+                    $successCount++
+                }
             }
             catch {
                 Write-Host "  ✗ $($policy.DisplayName): $_" -ForegroundColor Red
@@ -729,6 +763,72 @@ function Remove-FromConditionalAccessPolicies {
         }
         Write-Host "  Total processed: $($policiesToUpdate.Count)" -ForegroundColor White
         Write-Log "CA policy update completed: $successCount updated, $($alreadyExcluded.Count) skipped, $failCount failed" -Level Info
+
+        # --- Final state verification across all 'All users' policies ---
+        # Graph replication can lag; retry up to 3 times with 2-second intervals.
+        Write-Host ""
+        Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkCyan
+        Write-Host "VERIFICATION — Current exclusion state:" -ForegroundColor Cyan
+        Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkCyan
+        Write-Host "  Accounts checked: $(($bg | ForEach-Object { ($_.UserPrincipalName -split '@')[0] }) -join ', ')" -ForegroundColor Gray
+
+        $maxRetries = 3; $retryDelaySec = 2
+        $verifyAllPolicies = @()
+        $pendingPolicyIds = @($policiesToActuallyUpdate | ForEach-Object { $_.Policy.Id })
+        $confirmedResults = @{}  # policyId -> $true (ok) / $false (still missing)
+
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            Start-Sleep -Seconds $retryDelaySec
+            $fresh = @(Get-MgBetaIdentityConditionalAccessPolicy -All -ErrorAction SilentlyContinue |
+                Where-Object { $_.Conditions.Users.IncludeUsers -contains "All" })
+            if ($attempt -eq 1) { $verifyAllPolicies = $fresh }  # keep for final display
+
+            $stillPending = @()
+            foreach ($id in $pendingPolicyIds) {
+                $vp = $fresh | Where-Object { $_.Id -eq $id }
+                if (-not $vp) { continue }
+                $notExcluded = @($bg | Where-Object { $vp.Conditions.Users.ExcludeUsers -notcontains $_.Id })
+                if ($notExcluded.Count -eq 0) {
+                    $confirmedResults[$id] = $true
+                } else {
+                    $stillPending += $id
+                }
+            }
+            $pendingPolicyIds = $stillPending
+            if ($pendingPolicyIds.Count -eq 0) { break }
+            if ($attempt -lt $maxRetries) {
+                Write-Host "  ↻ $($pendingPolicyIds.Count) policy/policies not yet replicated, retrying (attempt $attempt/$maxRetries)..." -ForegroundColor DarkYellow
+            }
+        }
+        # Mark any still-pending after all retries as failed
+        foreach ($id in $pendingPolicyIds) { $confirmedResults[$id] = $false }
+
+        # Re-fetch latest state for display
+        $verifyAllPolicies = @(Get-MgBetaIdentityConditionalAccessPolicy -All -ErrorAction SilentlyContinue |
+            Where-Object { $_.Conditions.Users.IncludeUsers -contains "All" })
+
+        $verifyOk = 0; $verifyFail = 0
+        foreach ($vp in $verifyAllPolicies) {
+            $notExcluded = @($bg | Where-Object { $vp.Conditions.Users.ExcludeUsers -notcontains $_.Id })
+            if ($notExcluded.Count -eq 0) {
+                Write-Host ("  ✓ {0}" -f $vp.DisplayName) -ForegroundColor Green
+                $verifyOk++
+            } else {
+                $missing = ($notExcluded | ForEach-Object { ($_.UserPrincipalName -split '@')[0] }) -join ', '
+                Write-Host ("  ✗ {0}  [not excluded: {1}]" -f $vp.DisplayName, $missing) -ForegroundColor Red
+                $verifyFail++
+            }
+        }
+
+        Write-Host ""
+        if ($verifyFail -eq 0) {
+            Write-Host "  ✓ All $($verifyAllPolicies.Count) 'All users' $(if($verifyAllPolicies.Count -eq 1){'policy'}else{'policies'}) confirmed — accounts are fully excluded." -ForegroundColor Green
+            Write-Log "Final verification passed: all $($verifyAllPolicies.Count) 'All users' policies exclude the break-glass accounts" -Level Success
+        } else {
+            Write-Host "  ⚠ $verifyFail of $($verifyAllPolicies.Count) $(if($verifyAllPolicies.Count -eq 1){'policy'}else{'policies'}) still missing exclusions after $maxRetries retries — Graph replication may still be in progress." -ForegroundColor Yellow
+            Write-Log "Final verification: $verifyFail policy/policies still missing break-glass account exclusions after $maxRetries retries" -Level Warning
+        }
+        Write-Host "─────────────────────────────────────────────────────────────" -ForegroundColor DarkCyan
     }
     catch {
         Write-Log "Failed to update Conditional Access policies: $_" -Level Error
@@ -815,19 +915,24 @@ function Register-FIDO2KeysForUsers {
             }
             
             try {
-                # Register the FIDO2 key
-                $fido2Key = Register-Passkey -UPN $upn -DisplayName $displayName
-                Start-Sleep 2
-                
-                # Register the FIDO2 key in Entra ID
-                Register-FIDO2KeyInEntraID -UPN $upn -DisplayName $displayName -FIDO2 $fido2Key
+                if ($WhatIf) {
+                    Write-Log "WHATIF: Would register FIDO2 key '$displayName' for $upn" -Level Info
+                }
+                else {
+                    # Register the FIDO2 key
+                    $fido2Key = Register-Passkey -UPN $upn -DisplayName $displayName
+                    Start-Sleep 2
+                    
+                    # Register the FIDO2 key in Entra ID
+                    Register-FIDO2KeyInEntraID -UPN $upn -DisplayName $displayName -FIDO2 $fido2Key
                     Start-Sleep 2
                     
                     # Verify the registration
-                $verificationResult = Verify-Registration -UPN $upn -DisplayName $displayName
-                if (-not $verificationResult) {
-                    Write-Log "FIDO2 key registration verification failed for $upn" -Level Error
-                    throw "Verification failed for $displayName"
+                    $verificationResult = Verify-Registration -UPN $upn -DisplayName $displayName
+                    if (-not $verificationResult) {
+                        Write-Log "FIDO2 key registration verification failed for $upn" -Level Error
+                        throw "Verification failed for $displayName"
+                    }
                 }
             }
             catch {
@@ -1155,10 +1260,11 @@ function Test-CAExclusions {
     
     try {
         $policies = Get-MgBetaIdentityConditionalAccessPolicy -All -ErrorAction SilentlyContinue
-        $allUsersPolicies = $policies | Where-Object { $_.Conditions.Users.IncludeUsers -contains "All" }
+        $allUsersPolicies = @($policies | Where-Object { $_.Conditions.Users.IncludeUsers -contains "All" })
+        $policyCount = $allUsersPolicies.Count
         
-        if ($allUsersPolicies.Count -eq 0) {
-            return $true  # No policies to exclude from
+        if ($policyCount -eq 0) {
+            return @{ Excluded = $true; AllUsersPolicyCount = 0 }  # No policies to exclude from
         }
         
         $accountIds = $Accounts.Id
@@ -1166,14 +1272,14 @@ function Test-CAExclusions {
             $excludedUsers = $policy.Conditions.Users.ExcludeUsers
             foreach ($accountId in $accountIds) {
                 if ($excludedUsers -notcontains $accountId) {
-                    return $false  # At least one account not excluded from at least one policy
+                    return @{ Excluded = $false; AllUsersPolicyCount = $policyCount }
                 }
             }
         }
-        return $true
+        return @{ Excluded = $true; AllUsersPolicyCount = $policyCount }
     }
     catch {
-        return $false
+        return @{ Excluded = $false; AllUsersPolicyCount = 0 }
     }
 }
 
@@ -1251,12 +1357,15 @@ function Show-ConfigurationMenu {
     }
     
     # Step 2: CA Exclusions
-    if ($ConfigStatus.CAExcluded) {
+    if ($ConfigStatus.CAExcluded.Excluded) {
+        $caCount = $ConfigStatus.CAExcluded.AllUsersPolicyCount
+        $caLabel = if ($caCount -gt 0) { " [✓ Excluded from $caCount 'All users' $(if($caCount -eq 1){'policy'}else{'policies'})]" } else { " [✓ No 'All users' policies found]" }
         Write-Host "  [2] Exclude from Conditional Access policies" -NoNewline -ForegroundColor White
-        Write-Host " [✓ Already configured]" -ForegroundColor Green
+        Write-Host $caLabel -ForegroundColor Green
     } else {
+        $caCount = $ConfigStatus.CAExcluded.AllUsersPolicyCount
         Write-Host "  [2] Exclude from Conditional Access policies" -NoNewline -ForegroundColor White
-        Write-Host " [⚠ Needed]" -ForegroundColor Yellow
+        Write-Host " [⚠ Needed — $caCount 'All users' $(if($caCount -eq 1){'policy'}else{'policies'}) not fully covered]" -ForegroundColor Yellow
     }
     
     # Step 3: GA Role
@@ -1369,7 +1478,7 @@ function Start-BreakGlassConfiguration {
             $percentComplete = [int](($currentStep / $totalSteps) * 100)
             
             Show-Progress -Activity "Break-Glass Configuration" -Status "Updating Conditional Access policies" -PercentComplete $percentComplete
-            Remove-FromConditionalAccessPolicies
+            Remove-FromConditionalAccessPolicies -BreakGlassAccounts $BreakGlassAccounts
             Write-Log "✓ Configuration step 2 completed: Excluded from Conditional Access policies" -Level Success
         }
         else {
